@@ -1,0 +1,10 @@
+**/node_modules
+web/dist
+server/public
+android
+data
+backups
+.git
+.github
+docs
+*.md

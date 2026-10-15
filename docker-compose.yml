@@ -1,0 +1,28 @@
+# MyLib — put this folder at e.g. C:\Docker\MyLib and deploy it in Dockge.
+# Copy .env.example to .env first and fill it in.
+services:
+  mylib:
+    image: ghcr.io/dragoneat666/mylib:latest
+    container_name: mylib
+    restart: unless-stopped
+    ports:
+      - "14100:3000"          # web app + API (use http://<server or NetBird IP>:14100)
+    environment:
+      - TZ=${TZ:-America/Detroit}
+      - BACKUP_CRON=${BACKUP_CRON:-0 2 * * *}     # nightly at 2:00 AM
+      - BACKUP_KEEP_DAYS=${BACKUP_KEEP_DAYS:-30}
+      - GOOGLE_BOOKS_API_KEY=${GOOGLE_BOOKS_API_KEY:-}
+      - ISBNDB_API_KEY=${ISBNDB_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+    volumes:
+      - mylib_data:/data                    # database + cover images
+      - ${BACKUP_PATH:-./backups}:/backups  # nightly mylib_YYYY-MM-DD.sql / .csv land here
+    networks:
+      - denflix
+
+networks:
+  denflix:
+    external: true
+
+volumes:
+  mylib_data:

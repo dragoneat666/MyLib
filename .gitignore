@@ -1,0 +1,20 @@
+node_modules/
+*/node_modules/
+web/dist/
+server/public/
+.env
+data/
+backups/
+*.log
+.DS_Store
+Thumbs.db
+
+# Android
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/.idea/
+*.jks
+*.keystore
+*.apk

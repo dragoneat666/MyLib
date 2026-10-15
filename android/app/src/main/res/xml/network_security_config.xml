@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- MyLib usually runs on a home server reached over NetBird/LAN at a plain
+     http://100.x.y.z:port address, so cleartext HTTP must be allowed. The
+     NetBird tunnel itself is encrypted (WireGuard). -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>
