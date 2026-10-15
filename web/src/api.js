@@ -1,5 +1,4 @@
-// api.js — tiny fetch wrapper for the MyLib API. The login cookie is sent
-// automatically (same origin), so nothing else is needed for auth.
+// api.js — tiny fetch wrapper for the MyLib API.
 
 export class ApiError extends Error {
   constructor(message, status, body) {
@@ -10,7 +9,7 @@ export class ApiError extends Error {
 }
 
 async function request(method, path, body) {
-  const opts = { method, headers: {}, credentials: 'same-origin' };
+  const opts = { method, headers: {} };
   if (body instanceof FormData) opts.body = body;
   else if (body !== undefined) {
     opts.headers['Content-Type'] = 'application/json';
@@ -19,7 +18,6 @@ async function request(method, path, body) {
   const res = await fetch(path, opts);
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    if (res.status === 401 && !path.startsWith('/api/auth')) window.dispatchEvent(new Event('mylib:logged-out'));
     throw new ApiError(data.error || `Request failed (${res.status})`, res.status, data);
   }
   return data;

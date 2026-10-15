@@ -7,7 +7,6 @@ import android.net.Uri
 import android.os.Bundle
 import android.os.Environment
 import android.view.View
-import android.webkit.CookieManager
 import android.webkit.JavascriptInterface
 import android.webkit.URLUtil
 import android.webkit.ValueCallback
@@ -59,13 +58,6 @@ class MainActivity : AppCompatActivity() {
         val loading = findViewById<View>(R.id.loading)
 
         val base = prefs.server!!
-        // Log the web page in with the same token the scanner uses.
-        CookieManager.getInstance().apply {
-            setAcceptCookie(true)
-            setCookie(base, "mylib_token=${prefs.token}; path=/")
-            flush()
-        }
-
         web.settings.apply {
             javaScriptEnabled = true
             domStorageEnabled = true
@@ -121,8 +113,6 @@ class MainActivity : AppCompatActivity() {
         web.setDownloadListener { url, userAgent, contentDisposition, mimeType, _ ->
             val name = URLUtil.guessFileName(url, contentDisposition, mimeType)
             val request = DownloadManager.Request(Uri.parse(url))
-                .addRequestHeader("Cookie", CookieManager.getInstance().getCookie(url) ?: "")
-                .addRequestHeader("Authorization", "Bearer ${prefs.token}")
                 .addRequestHeader("User-Agent", userAgent)
                 .setMimeType(mimeType)
                 .setTitle(name)
@@ -136,7 +126,7 @@ class MainActivity : AppCompatActivity() {
             offline.visibility = View.GONE
             web.reload()
         }
-        findViewById<View>(R.id.changeServer).setOnClickListener { signOut() }
+        findViewById<View>(R.id.changeServer).setOnClickListener { changeServer() }
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
@@ -158,14 +148,12 @@ class MainActivity : AppCompatActivity() {
         scanLauncher.launch(intent)
     }
 
-    private fun signOut() {
-        prefs.token = null
-        CookieManager.getInstance().removeAllCookies(null)
-        startActivity(Intent(this, SetupActivity::class.java))
+    private fun changeServer() {
+        startActivity(Intent(this, SetupActivity::class.java).putExtra(SetupActivity.EXTRA_EDIT, true))
         finish()
     }
 
-    /** Methods the web page can call: window.MyLibAndroid.scan(collectionId) etc. */
+    /** Methods the web page can call: window.MyLibAndroid.scan(collectionId), .changeServer() */
     inner class Bridge {
         @JavascriptInterface
         fun scan(collectionId: Int) {
@@ -173,8 +161,8 @@ class MainActivity : AppCompatActivity() {
         }
 
         @JavascriptInterface
-        fun loggedOut() {
-            runOnUiThread { signOut() }
+        fun changeServer() {
+            runOnUiThread { this@MainActivity.changeServer() }
         }
 
         @JavascriptInterface

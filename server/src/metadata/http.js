@@ -11,7 +11,10 @@ export async function fetchJson(url, { headers = {}, timeout = 12000 } = {}) {
   });
   if (res.status === 404) return null;
   if (!res.ok) {
-    const err = new Error(`${new URL(url).hostname} responded ${res.status}`);
+    // Pass on the service's own explanation (e.g. Google's "API key not valid").
+    const body = await res.json().catch(() => null);
+    const detail = body?.error?.message || body?.message || body?.errorMessage || '';
+    const err = new Error(`${new URL(url).hostname} responded ${res.status}${detail ? `: ${detail}` : ''}`);
     err.status = res.status;
     throw err;
   }

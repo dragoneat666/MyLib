@@ -32,6 +32,12 @@ knowledge of the book (for example, the series a numbered children's book belong
 Leave a field as an empty string (or empty list) when you can't tell. ocr_text below is what the
 phone's text recognizer read from the same photo; it may be incomplete or jumbled.`;
 
+// Checks the key and model without using any tokens (free).
+export async function checkKey() {
+  const model = await getClient().models.retrieve(config.anthropicModel);
+  return model.display_name || model.id;
+}
+
 // imageBuffer: JPEG/PNG bytes. Returns the parsed identification or null.
 export async function identifyCover(imageBuffer, mediaType = 'image/jpeg', ocrText = '') {
   if (!enabled()) return null;

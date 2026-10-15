@@ -12,7 +12,6 @@ import { getDb } from '../db.js';
 import { parseLibibCsv, rowToItem } from '../libib.js';
 import { getOrCreateCollection, insertItem, updateItem } from '../items.js';
 import { queueCovers, coverQueueStatus } from '../covers.js';
-import { requireAdmin } from '../auth.js';
 import { sqlDump, libraryCsv, localDate, runBackup, listBackups, restoreFromSql } from '../backup.js';
 import { config } from '../config.js';
 
@@ -175,7 +174,7 @@ backupRouter.get('/', (_req, res) => {
   res.json({ backups: listBackups(), dir: config.backupDir, schedule: config.backupCron, keepDays: config.backupKeepDays });
 });
 
-backupRouter.post('/run', requireAdmin, (_req, res) => {
+backupRouter.post('/run', (_req, res) => {
   res.json(runBackup());
 });
 
@@ -186,7 +185,7 @@ backupRouter.get('/download/:file', (req, res) => {
   res.download(full, file);
 });
 
-backupRouter.post('/restore', requireAdmin, upload.single('file'), async (req, res) => {
+backupRouter.post('/restore', upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'Choose a .sql backup file' });
   const result = await restoreFromSql(req.file.buffer.toString('utf8'));
   res.json({ ok: true, ...result });

@@ -2,7 +2,7 @@
 
 import { Router } from 'express';
 import multer from 'multer';
-import { lookupIsbn, search, identifyCover, providers } from '../metadata/index.js';
+import { lookupIsbn, search, identifyCover, providerDetails, testProvider } from '../metadata/index.js';
 import { normalizeIsbn } from '../metadata/isbn.js';
 import { findOwned } from '../items.js';
 
@@ -11,7 +11,12 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 12 
 
 const withOwned = (r) => ({ ...r, owned: r.isbn13 || r.isbn10 ? findOwned(r.isbn13 || r.isbn10) : [] });
 
-router.get('/providers', (_req, res) => res.json(providers()));
+router.get('/providers', (_req, res) => res.json({ providers: providerDetails() }));
+
+// POST /api/lookup/providers/:id/test — "Test" button in Settings
+router.post('/providers/:id/test', async (req, res) => {
+  res.json(await testProvider(req.params.id));
+});
 
 // GET /api/lookup/isbn/:isbn — one barcode scan
 router.get('/isbn/:isbn', async (req, res) => {

@@ -9,7 +9,8 @@ A self-hosted home library, like [Libib](https://www.libib.com/), where you own 
 - **Libib CSV import** (re-importing the same file is safe: duplicates are skipped)
 - **Export** one collection or the whole library as CSV (Libib's format), or the whole database as SQL
 - **Nightly backups**: `mylib_YYYY-MM-DD.sql` + `mylib_YYYY-MM-DD.csv` written to a folder on the host
-- Logins for several people, covers saved locally, reading status, ratings, tags, notes, copies
+- No logins (like PokeTracker): it's only reachable on the home network / NetBird
+- Covers saved locally, reading status, ratings, tags, notes, copies
 
 One Docker container (Node.js + SQLite + the React web app). Images are built by GitHub Actions:
 `ghcr.io/dragoneat666/mylib:latest`.
@@ -32,7 +33,7 @@ MyLib combines these sources:
 | **Claude** (Anthropic) | pay per use (a few cents per cover photo) | reads cover photos to identify books | `ANTHROPIC_API_KEY` |
 
 Open Library alone finds most books; with no keys, it found covers for 24 of the 29 American Girl books in the sample export.
-Adding the free Google Books key is recommended. To get one: <https://console.cloud.google.com> → create
+Adding the free Google Books key is recommended; check it with the **Test** button in Settings. To get one: <https://console.cloud.google.com> → create
 a project → *APIs & Services → Library* → enable **Books API** → *Credentials → Create credentials → API key*.
 
 Each book also gets an **ISBN-13** and **ISBN-10** (one is calculated from the other when only one is
@@ -46,8 +47,8 @@ the barcode always gives you the exact edition on your shelf.
 1. Create a folder, e.g. `C:\Docker\MyLib`, and put [`docker-compose.yml`](docker-compose.yml) and
    [`.env.example`](.env.example) in it. Copy `.env.example` to `.env` and fill it in (all keys are optional).
 2. In Dockge, deploy the `MyLib` stack. The compose file joins the existing `denflix` network like your other stacks.
-3. Open `http://<server>:14100`. The first visit asks you to **create the admin account**.
-   Add your wife's account under **Settings → People**.
+3. Open `http://<server>:14100`. Under **Settings → Book information sources**, press **Test** next to each
+   source to check it works (e.g. that your Google Books key is valid).
 4. **Import** her Libib CSV files (*Import* page). Tick *Download cover pictures* to fetch covers.
 
 Updating: `docker compose pull && docker compose up -d` (or *Update* in Dockge) after the GitHub build goes green.
@@ -57,9 +58,8 @@ Updating: `docker compose pull && docker compose up -d` (or *Update* in Dockge) 
 MyLib listens on port **14100**. Over NetBird, use the server's NetBird IP: `http://100.x.y.z:14100`,
 both in the phone's browser and in the Android app. NetBird encrypts the traffic, so plain `http` is fine.
 
-If you'd rather publish it on your domain (e.g. `mylib.denflix.club`) through your reverse proxy, point the
-proxy at `mylib:3000` on the `denflix` network. Don't put Authentik forward-auth in front of it: MyLib has its
-own logins, and the Android app needs to reach `/api` directly.
+MyLib has **no logins**, so don't publish it to the internet (no port forward or public reverse-proxy host).
+Anyone who can reach port 14100 can change the library.
 
 ### Backups → Dropbox
 
@@ -78,8 +78,8 @@ half-written file. Files older than `BACKUP_KEEP_DAYS` (default 30) are deleted.
 robocopy "C:\Docker\MyLib\backups" "%USERPROFILE%\Dropbox\Backups\MyLib" mylib_*.sql mylib_*.csv /MOV /R:2 /W:5
 ```
 
-Login sessions are left out of the backups. Cover images live in the `mylib_data` volume and can be
-downloaded again with **Select → Find covers**.
+Cover images live in the `mylib_data` volume and aren't in the nightly files; they can be downloaded again
+with **Select → Find covers**.
 
 ---
 
@@ -87,8 +87,8 @@ downloaded again with **Select → Find covers**.
 
 **Install:** on the phone, open `http://<server>:14100/download/mylib.apk` (also linked in **Settings**), or download
 `mylib.apk` from the [android-latest release](https://github.com/dragoneat666/MyLib/releases/tag/android-latest).
-Allow installing from the browser when Android asks. Then enter the server address (the NetBird IP and port),
-username and password.
+Allow installing from the browser when Android asks. Then enter the server address (the NetBird IP and port)
+and tap **Connect**. To change it later: **Settings → Change server address** in the app.
 
 The app shows the same library as the website. The orange **camera** button opens the scanner:
 
@@ -123,4 +123,4 @@ and `cd web && npm run dev` (proxies `/api` to port 3099).
 
 Settings (environment variables): `PORT` (3000), `DATA_DIR` (/data), `BACKUP_DIR` (/backups), `BACKUP_CRON`,
 `BACKUP_KEEP_DAYS`, `TZ`, `GOOGLE_BOOKS_API_KEY`, `ISBNDB_API_KEY`, `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL`
-(default `claude-opus-5-5`), `TRUST_PROXY`, `AUTH_DISABLED` (LAN-only, not recommended).
+(default `claude-opus-5-5`), `TRUST_PROXY`.

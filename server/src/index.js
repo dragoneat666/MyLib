@@ -4,10 +4,8 @@
 import fs from 'fs';
 import path from 'path';
 import express from 'express';
-import cookieParser from 'cookie-parser';
 import { config } from './config.js';
 import { initDb, getDb, SCHEMA_VERSION } from './db.js';
-import { authRouter, usersRouter, requireAuth } from './auth.js';
 import collectionsRouter from './routes/collections.js';
 import itemsRouter from './routes/items.js';
 import lookupRouter from './routes/lookup.js';
@@ -21,7 +19,6 @@ const app = express();
 app.set('trust proxy', /^\d+$/.test(config.trustProxy) ? Number(config.trustProxy) : config.trustProxy);
 app.disable('x-powered-by');
 app.use(express.json({ limit: '2mb' }));
-app.use(cookieParser());
 
 app.use((req, res, next) => {
   if (req.path.startsWith('/api/')) {
@@ -36,11 +33,6 @@ app.get('/health', (_req, res) => {
   res.json({ status: 'ok', version: config.version });
 });
 
-app.use('/api/auth', authRouter);
-app.use('/api/users', usersRouter);
-
-// Everything else under /api needs a login.
-app.use('/api', requireAuth);
 app.use('/api/collections', collectionsRouter);
 app.use('/api/items', itemsRouter);
 app.use('/api/lookup', lookupRouter);
@@ -71,16 +63,15 @@ app.get('/api/info', (_req, res) => {
     schema: SCHEMA_VERSION,
     providers: providers(),
     apk: fs.existsSync(config.apkFile),
-    authDisabled: config.authDisabled,
   });
 });
 
 app.use('/api', (_req, res) => res.status(404).json({ error: 'Not found' }));
 
-// Cover images (logged-in users only — the web app and the phone send the cookie/token).
-app.use('/covers', requireAuth, express.static(config.coversDir, { maxAge: '30d', immutable: true, fallthrough: false }));
+// Cover images
+app.use('/covers', express.static(config.coversDir, { maxAge: '30d', immutable: true, fallthrough: false }));
 
-// Android app download (no login needed so the phone can grab it from the login page).
+// Android app download
 app.get('/download/mylib.apk', (_req, res) => {
   if (!fs.existsSync(config.apkFile)) return res.status(404).send('The Android app is not included in this build.');
   res.download(config.apkFile, 'mylib.apk');
@@ -108,6 +99,5 @@ app.listen(config.port, () => {
   console.log(`   data: ${config.dataDir}   backups: ${config.backupDir}`);
   const p = providers();
   console.log(`   metadata: Open Library${p.google ? ', Google Books' : ''}${p.isbndb ? ', ISBNdb' : ''}${p.ai ? ', Claude cover reading' : ''}`);
-  if (config.authDisabled) console.warn('⚠️  AUTH_DISABLED is on — anyone who can reach this port can edit the library');
   startBackupSchedule();
 });

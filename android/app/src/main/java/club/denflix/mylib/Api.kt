@@ -19,7 +19,7 @@ data class LibCollection(val id: Int, val name: String, val count: Int) {
 }
 
 /** Blocking calls to the MyLib server — always call from a background thread. */
-class Api(base: String, private val token: String?) {
+class Api(base: String) {
     private val base = base.trimEnd('/')
 
     companion object {
@@ -31,9 +31,7 @@ class Api(base: String, private val token: String?) {
         private val JSON = "application/json".toMediaType()
     }
 
-    private fun request(path: String) = Request.Builder().url(base + path).apply {
-        token?.let { header("Authorization", "Bearer $it") }
-    }
+    private fun request(path: String) = Request.Builder().url(base + path)
 
     private fun execute(req: Request): JSONObject {
         try {
@@ -42,7 +40,7 @@ class Api(base: String, private val token: String?) {
                 val json = runCatching { JSONObject(text) }.getOrNull()
                 if (!res.isSuccessful) {
                     val msg = json?.optString("error")?.takeIf { it.isNotBlank() }
-                        ?: if (res.code == 401) "Please sign in again" else "Server error (${res.code})"
+                        ?: "Server error (${res.code})"
                     throw ApiException(msg, res.code, json)
                 }
                 return json ?: JSONObject()
@@ -59,16 +57,6 @@ class Api(base: String, private val token: String?) {
     private fun postJson(path: String, json: JSONObject) = post(path, json.toString().toRequestBody(JSON))
 
     fun health(): JSONObject = execute(Request.Builder().url("$base/health").get().build())
-
-    /** Returns the device token. */
-    fun login(username: String, password: String, device: String): String {
-        val body = JSONObject().put("username", username).put("password", password).put("device", device)
-        return postJson("/api/auth/login", body).getString("token")
-    }
-
-    fun logout() {
-        runCatching { postJson("/api/auth/logout", JSONObject()) }
-    }
 
     fun collections(): List<LibCollection> {
         val arr = get("/api/collections").getJSONArray("collections")
@@ -108,12 +96,10 @@ class Api(base: String, private val token: String?) {
         return post("/api/items/$itemId/cover", body)
     }
 
-    /** Download an image (cover thumbnails). Relative paths go to our server with the token. */
+    /** Download an image (cover thumbnails). Relative paths are on our server. */
     fun imageBytes(url: String): ByteArray? {
         val full = if (url.startsWith("/")) base + url else url
-        val req = Request.Builder().url(full).apply {
-            if (url.startsWith("/")) token?.let { header("Authorization", "Bearer $it") }
-        }.build()
+        val req = Request.Builder().url(full).build()
         return runCatching { client.newCall(req).execute().use { if (it.isSuccessful) it.body?.bytes() else null } }.getOrNull()
     }
 }

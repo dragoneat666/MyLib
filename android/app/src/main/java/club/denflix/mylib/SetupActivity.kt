@@ -1,7 +1,6 @@
 package club.denflix.mylib
 
 import android.content.Intent
-import android.os.Build
 import android.os.Bundle
 import android.view.View
 import android.view.inputmethod.EditorInfo
@@ -15,8 +14,13 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-/** First screen: server address + username/password. */
+/** First screen: the server address. There are no logins — MyLib is only on the home network / NetBird. */
 class SetupActivity : AppCompatActivity() {
+    companion object {
+        /** Opened from "Change server" rather than on first launch. */
+        const val EXTRA_EDIT = "edit"
+    }
+
     private lateinit var prefs: Prefs
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -25,21 +29,17 @@ class SetupActivity : AppCompatActivity() {
         prefs = Prefs(this)
 
         val server = findViewById<EditText>(R.id.server)
-        val username = findViewById<EditText>(R.id.username)
-        val password = findViewById<EditText>(R.id.password)
         val error = findViewById<TextView>(R.id.error)
-        val button = findViewById<Button>(R.id.signIn)
+        val button = findViewById<Button>(R.id.connect)
         val progress = findViewById<ProgressBar>(R.id.progress)
 
         server.setText(prefs.server ?: "http://")
-        username.setText(prefs.username.orEmpty())
+        server.setSelection(server.text.length)
 
         fun submit() {
             val base = Prefs.normalizeServer(server.text.toString())
-            val user = username.text.toString().trim()
-            val pass = password.text.toString()
-            if (base.length < 10 || user.isEmpty() || pass.isEmpty()) {
-                error.text = "Fill in the server address, username and password."
+            if (base.length < 10) {
+                error.text = "Enter the server address, e.g. http://100.64.0.5:14100"
                 error.visibility = View.VISIBLE
                 return
             }
@@ -47,32 +47,38 @@ class SetupActivity : AppCompatActivity() {
             button.isEnabled = false
             progress.visibility = View.VISIBLE
             lifecycleScope.launch {
-                val result = withContext(Dispatchers.IO) {
-                    runCatching {
-                        Api(base, null).health()
-                        Api(base, null).login(user, pass, "MyLib app on ${Build.MANUFACTURER} ${Build.MODEL}")
-                    }
-                }
+                // Make sure the address really is a MyLib server before saving it.
+                val result = withContext(Dispatchers.IO) { runCatching { Api(base).health() } }
                 progress.visibility = View.GONE
                 button.isEnabled = true
-                result.onSuccess { token ->
+                val ok = result.getOrNull()?.optString("status") == "ok"
+                if (ok) {
                     prefs.server = base
-                    prefs.username = user
-                    prefs.token = token
                     startActivity(Intent(this@SetupActivity, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK or Intent.FLAG_ACTIVITY_NEW_TASK))
                     finish()
-                }.onFailure {
-                    error.text = it.message ?: "Couldn't sign in"
+                } else {
+                    error.text = result.exceptionOrNull()?.message?.let { "$it\n\nCheck the address and port." }
+                        ?: "That address answered, but it isn't a MyLib server."
                     error.visibility = View.VISIBLE
                 }
             }
         }
 
         button.setOnClickListener { submit() }
-        password.setOnEditorActionListener { _, actionId, _ ->
-            if (actionId == EditorInfo.IME_ACTION_DONE) {
+        server.setOnEditorActionListener { _, actionId, _ ->
+            if (actionId == EditorInfo.IME_ACTION_DONE || actionId == EditorInfo.IME_ACTION_GO) {
                 submit(); true
             } else false
+        }
+
+        // Back out of "Change server" to the library without changing anything.
+        if (intent.getBooleanExtra(EXTRA_EDIT, false) && prefs.isConnected) {
+            onBackPressedDispatcher.addCallback(this, object : androidx.activity.OnBackPressedCallback(true) {
+                override fun handleOnBackPressed() {
+                    startActivity(Intent(this@SetupActivity, MainActivity::class.java))
+                    finish()
+                }
+            })
         }
     }
 }

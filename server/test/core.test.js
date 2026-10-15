@@ -14,7 +14,7 @@ process.env.BACKUP_DIR = path.join(tmp, 'backups');
 
 const { normalizeIsbn, isbn10to13, isbn13to10 } = await import('../src/metadata/isbn.js');
 const { parseLibibCsv, rowToItem, itemsToCsv, LIBIB_COLUMNS } = await import('../src/libib.js');
-const { initDb, getDb } = await import('../src/db.js');
+const { initDb, getDb, migrate } = await import('../src/db.js');
 const { sqlDump } = await import('../src/backup.js');
 const { scoreCandidate, queriesFromLines, mergeResults } = await import('../src/metadata/index.js');
 
@@ -69,18 +69,15 @@ test('SQL dump restores into an identical database', () => {
   const db = getDb();
   db.prepare("INSERT INTO collections (name) VALUES ('Test ''quoted'' shelf')").run();
   db.prepare("INSERT INTO items (collection_id, title, description, ean_isbn13) VALUES (1, 'It''s a book', 'line1\nline2', '9780439398749')").run();
-  db.prepare("INSERT INTO users (username, password_hash) VALUES ('a', 'x')").run();
-  db.prepare("INSERT INTO tokens (user_id, token_hash) VALUES (1, 'secret')").run();
 
   const dump = sqlDump(db);
-  assert.ok(!dump.includes("'secret'"), 'login tokens are not included');
+  assert.ok(!/CREATE TABLE (users|tokens)/.test(dump), 'login tables are gone');
   const blank = new Database(path.join(tmp, 'restored.db'));
   blank.exec(dump);
   assert.equal(blank.prepare('SELECT name FROM collections').get().name, "Test 'quoted' shelf");
   const item = blank.prepare('SELECT * FROM items').get();
   assert.equal(item.title, "It's a book");
   assert.equal(item.description, 'line1\nline2');
-  assert.equal(blank.prepare('SELECT COUNT(*) AS n FROM tokens').get().n, 0);
   assert.equal(blank.pragma('user_version', { simple: true }), db.pragma('user_version', { simple: true }));
   blank.close();
 });
@@ -104,4 +101,18 @@ test('merging sources prefers retail titles and full dates', () => {
   assert.equal(merged.cover_url, 'ol.jpg');
   assert.equal(merged.series, 'American girl');
   assert.deepEqual(merged.sources, ['openlibrary', 'google']);
+});
+
+test('a backup made before logins were removed still restores', () => {
+  // Shape of a v1 dump: includes users/tokens tables.
+  const old = new Database(':memory:');
+  old.exec(`CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT);
+            CREATE TABLE tokens (id INTEGER PRIMARY KEY, user_id INTEGER);
+            CREATE TABLE collections (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE COLLATE NOCASE, description TEXT, created_at TEXT);
+            INSERT INTO users VALUES (1, 'admin');
+            PRAGMA user_version = 1;`);
+  migrate(old);
+  const tables = old.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all().map((t) => t.name);
+  assert.ok(!tables.includes('users') && !tables.includes('tokens'));
+  assert.ok(tables.includes('collections'));
 });

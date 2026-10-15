@@ -13,9 +13,6 @@ import { config } from './config.js';
 import { getDb, closeDb, initDb, migrate } from './db.js';
 import { itemsToCsv } from './libib.js';
 
-// Tables whose rows are left out of dumps: login sessions shouldn't sit in Dropbox.
-const SKIP_ROWS = new Set(['tokens']);
-
 function sqlValue(v) {
   if (v === null || v === undefined) return 'NULL';
   if (typeof v === 'number' || typeof v === 'bigint') return String(v);
@@ -36,7 +33,6 @@ export function sqlDump(db = getDb()) {
     .all();
   for (const { name, sql } of tables) {
     out.push(`${sql};`);
-    if (SKIP_ROWS.has(name)) continue;
     const cols = db.prepare(`PRAGMA table_info("${name}")`).all().map((c) => c.name);
     const colList = cols.map((c) => `"${c}"`).join(',');
     for (const row of db.prepare(`SELECT * FROM "${name}" ORDER BY rowid`).raw().iterate()) {
@@ -105,6 +101,7 @@ export function listBackups() {
 
 // Replace the whole database with the contents of a SQL dump.
 // A copy of the current database is saved first as pre-restore_<time>.db.
+// Older dumps (with the removed login tables) are upgraded by migrate().
 export async function restoreFromSql(sql) {
   if (!/CREATE TABLE\s+(IF NOT EXISTS\s+)?"?items"?/i.test(sql)) {
     throw Object.assign(new Error("This file doesn't look like a MyLib SQL backup"), { status: 400 });

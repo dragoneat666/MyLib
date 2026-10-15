@@ -1,4 +1,4 @@
-// context.jsx — app-wide state: the logged-in user, the collection list and toasts.
+// context.jsx — app-wide state: the collection list and toasts.
 
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { api } from './api.js';
@@ -6,7 +6,7 @@ import { api } from './api.js';
 const AppContext = createContext(null);
 export const useApp = () => useContext(AppContext);
 
-export function AppProvider({ user, onLogout, children }) {
+export function AppProvider({ children }) {
   const [collections, setCollections] = useState([]);
   const [toasts, setToasts] = useState([]);
   const [version, setVersion] = useState(0); // bump to make pages reload their items
@@ -45,7 +45,7 @@ export function AppProvider({ user, onLogout, children }) {
   }, [libraryChanged]);
 
   return (
-    <AppContext.Provider value={{ user, onLogout, collections, refreshCollections, toast, version, libraryChanged }}>
+    <AppContext.Provider value={{ collections, refreshCollections, toast, version, libraryChanged }}>
       {children}
       <div className="toasts" role="status" aria-live="polite">
         {toasts.map((t) => (

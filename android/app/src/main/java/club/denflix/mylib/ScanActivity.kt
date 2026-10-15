@@ -121,7 +121,7 @@ class ScanActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_scan)
         prefs = Prefs(this)
-        api = Api(prefs.server!!, prefs.token)
+        api = Api(prefs.server!!)
         cameraExecutor = Executors.newSingleThreadExecutor()
 
         previewView = findViewById(R.id.preview)
@@ -559,13 +559,6 @@ class ScanActivity : AppCompatActivity() {
     }
 
     private fun handleError(err: Throwable) {
-        if (err is ApiException && err.status == 401) {
-            Toast.makeText(this, "Please sign in again", Toast.LENGTH_LONG).show()
-            prefs.token = null
-            startActivity(Intent(this, SetupActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK or Intent.FLAG_ACTIVITY_NEW_TASK))
-            finish()
-            return
-        }
         Toast.makeText(this, err.message ?: "Something went wrong", Toast.LENGTH_LONG).show()
     }
 

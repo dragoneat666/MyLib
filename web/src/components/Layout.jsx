@@ -39,7 +39,7 @@ export function NewCollectionModal({ onClose, onCreated }) {
 }
 
 export default function Layout({ children }) {
-  const { collections, user, onLogout } = useApp();
+  const { collections } = useApp();
   const [navOpen, setNavOpen] = useState(false);
   const [newColl, setNewColl] = useState(false);
   const [search, setSearch] = useState('');
@@ -105,9 +105,6 @@ export default function Layout({ children }) {
           <NavLink to="/export" className="nav-item"><Icon name="download" /> Export</NavLink>
           <NavLink to="/backups" className="nav-item"><Icon name="backup" /> Backups</NavLink>
           <NavLink to="/settings" className="nav-item"><Icon name="settings" /> Settings</NavLink>
-          {onLogout && (
-            <button className="nav-item" onClick={onLogout}><Icon name="logout" /> Sign out <span className="muted small">{user.username}</span></button>
-          )}
         </div>
       </nav>
       <div className="nav-scrim" onClick={() => setNavOpen(false)} />

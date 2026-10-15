@@ -10,6 +10,7 @@ import * as google from './googlebooks.js';
 import * as isbndb from './isbndb.js';
 import * as ai from './ai.js';
 import { normalizeIsbn } from './isbn.js';
+import { config } from '../config.js';
 
 export function providers() {
   return {
@@ -18,6 +19,43 @@ export function providers() {
     isbndb: isbndb.enabled(),
     ai: ai.enabled(),
   };
+}
+
+// "AIzaSyB…x9Qw" — enough to tell which key is loaded without showing it.
+const mask = (key) => (key ? `${key.slice(0, 6)}…${key.slice(-4)}` : null);
+
+export function providerDetails() {
+  return [
+    { id: 'openlibrary', name: 'Open Library', enabled: true, key: null, env: null },
+    { id: 'google', name: 'Google Books', enabled: google.enabled(), key: mask(config.googleBooksKey), env: 'GOOGLE_BOOKS_API_KEY' },
+    { id: 'isbndb', name: 'ISBNdb', enabled: isbndb.enabled(), key: mask(config.isbndbKey), env: 'ISBNDB_API_KEY' },
+    { id: 'ai', name: 'Claude cover reading', enabled: ai.enabled(), key: mask(config.anthropicKey), env: 'ANTHROPIC_API_KEY' },
+  ];
+}
+
+// Test book: Magic Tree House #1, Dinosaurs Before Dark.
+export const TEST_ISBN = '9780679824114';
+
+// Make one real request to a source and report what happened.
+export async function testProvider(id) {
+  const lookups = { openlibrary: openlibrary.lookupIsbn, google: google.lookupIsbn, isbndb: isbndb.lookupIsbn };
+  const details = providerDetails().find((p) => p.id === id);
+  if (!details) return { ok: false, message: 'Unknown source' };
+  if (!details.enabled) return { ok: false, message: `No key set. Add ${details.env} to the .env file and restart the container.` };
+  const started = Date.now();
+  try {
+    if (id === 'ai') {
+      const model = await ai.checkKey();
+      return { ok: true, message: `Key works — ${model} is available.`, ms: Date.now() - started };
+    }
+    const book = await lookups[id](TEST_ISBN);
+    const ms = Date.now() - started;
+    if (!book?.title) return { ok: false, message: `Connected, but the test book (ISBN ${TEST_ISBN}) wasn't found.`, ms };
+    const by = book.authors?.length ? ` by ${book.authors.join(', ')}` : '';
+    return { ok: true, message: `Works — found “${book.title}”${by}.`, ms };
+  } catch (err) {
+    return { ok: false, message: err.message, ms: Date.now() - started };
+  }
 }
 
 const settle = async (promise, label) => {

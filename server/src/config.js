@@ -20,8 +20,6 @@ export const config = {
   webDir: path.resolve(env.WEB_DIR || path.join(process.cwd(), 'public')),
   // Android APK served for download from Settings, if present.
   apkFile: path.resolve(env.APK_FILE || path.join(process.cwd(), 'apk', 'mylib.apk')),
-  // Set AUTH_DISABLED=true only for a LAN-only install you fully trust.
-  authDisabled: /^(1|true|yes)$/i.test(env.AUTH_DISABLED || ''),
   // Number of reverse proxies in front of the app (for correct client IPs / https detection).
   trustProxy: env.TRUST_PROXY ?? '1',
   googleBooksKey: env.GOOGLE_BOOKS_API_KEY || '',

@@ -91,6 +91,11 @@ const MIGRATIONS = [
     value TEXT
   );
   `,
+  // v2 — logins removed: MyLib is only reachable on the home network / NetBird.
+  `
+  DROP TABLE IF EXISTS tokens;
+  DROP TABLE IF EXISTS users;
+  `,
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;

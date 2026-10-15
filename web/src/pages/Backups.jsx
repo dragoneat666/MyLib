@@ -6,7 +6,7 @@ import { useApp } from '../context.jsx';
 import { Icon } from '../components/ui.jsx';
 
 export default function Backups() {
-  const { user, toast } = useApp();
+  const { toast } = useApp();
   const [data, setData] = useState(null);
   const [busy, setBusy] = useState(false);
   const fileRef = useRef(null);
@@ -30,7 +30,7 @@ export default function Backups() {
 
   const restore = async (file) => {
     if (!file) return;
-    if (!confirm(`Replace the ENTIRE library with “${file.name}”?\n\nA copy of the current database is saved first. Everyone will need to sign in again.`)) {
+    if (!confirm(`Replace the ENTIRE library with “${file.name}”?\n\nA copy of the current database is saved first.`)) {
       fileRef.current.value = '';
       return;
     }
@@ -39,7 +39,7 @@ export default function Backups() {
     fd.append('file', file);
     try {
       await api.post('/api/backups/restore', fd);
-      alert('Restore complete. Please sign in again.');
+      alert('Restore complete.');
       window.location.href = '/';
     } catch (err) {
       toast(err.message, 'error');
@@ -57,13 +57,11 @@ export default function Backups() {
         Map that folder to your computer in Docker and your copy-to-Dropbox script can pick the files up.
       </p>
 
-      {user.is_admin && (
-        <div className="card row gap wrap">
-          <button className="btn btn-primary" onClick={runNow} disabled={busy}><Icon name="backup" size={18} /> Back up now</button>
-          <button className="btn" onClick={() => fileRef.current?.click()} disabled={busy}><Icon name="upload" size={18} /> Restore from .sql…</button>
-          <input ref={fileRef} type="file" accept=".sql" hidden onChange={(e) => restore(e.target.files[0])} />
-        </div>
-      )}
+      <div className="card row gap wrap">
+        <button className="btn btn-primary" onClick={runNow} disabled={busy}><Icon name="backup" size={18} /> Back up now</button>
+        <button className="btn" onClick={() => fileRef.current?.click()} disabled={busy}><Icon name="upload" size={18} /> Restore from .sql…</button>
+        <input ref={fileRef} type="file" accept=".sql" hidden onChange={(e) => restore(e.target.files[0])} />
+      </div>
 
       <div className="card">
         {data?.backups?.length ? (
@@ -81,7 +79,7 @@ export default function Backups() {
             </tbody>
           </table>
         ) : (
-          <p className="muted">No backups yet{user.is_admin ? ' — press “Back up now” to make the first one.' : '.'}</p>
+          <p className="muted">No backups yet — press “Back up now” to make the first one.</p>
         )}
       </div>
     </div>
