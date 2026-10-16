@@ -1,5 +1,5 @@
 // routes/transfer.js — Libib CSV import, CSV/SQL export and backups.
-//   POST /api/import/libib
+//   POST /api/import/libib, POST /api/import/resolve
 //   GET  /api/export/csv[?collection_id=]
 //   GET  /api/export/sql
 //   GET  /api/backups, POST /api/backups/run, GET /api/backups/download/:file, POST /api/backups/restore
@@ -10,7 +10,8 @@ import fs from 'fs';
 import path from 'path';
 import { getDb } from '../db.js';
 import { parseLibibCsv, rowToItem } from '../libib.js';
-import { getOrCreateCollection, insertItem, updateItem } from '../items.js';
+import { getOrCreateCollection, insertItem, updateItem, findDuplicate, sanitizeFields, getItem, UNSORTED_NAME } from '../items.js';
+import { normalizeTagField, changeItemTags, parseTags } from '../tags.js';
 import { queueCovers, coverQueueStatus } from '../covers.js';
 import { sqlDump, libraryCsv, localDate, runBackup, listBackups, restoreFromSql } from '../backup.js';
 import { config } from '../config.js';
@@ -26,13 +27,45 @@ const slug = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(
 // ── Import ───────────────────────────────────────────────────────────────────
 // multipart fields:
 //   file          the Libib CSV
-//   mode          "csv"    → use the CSV's collection column (default)
+//   mode          "csv"    → use the CSV's collection column (default; rows without one go to New & Unsorted)
 //                 "single" → put everything in one collection
-//   collection_id / new_collection   target for "single" mode (or fallback for rows without a collection)
-//   duplicates    "skip" (default) | "update" | "add"
+//   collection_id / new_collection   target for "single" mode ("unsorted" = New & Unsorted)
+//   duplicates    what to do when a book is already in MyLib (same ISBN, any collection):
+//                 "ask" (default) → import the rest and return the duplicates as `conflicts`
+//                                   for the user to decide (POST /api/import/resolve)
+//                 "ignore" | "copy" (add another copy) | "replace" (update its details)
 //   fetch_covers  "true" to download covers in the background
 //   dry_run       "true" to only report what would happen
+//
+// Rows with the same Libib ID as a book already imported are the same record,
+// not another copy, so they're skipped silently (or updated in "replace" mode).
 class DryRun extends Error {}
+
+const DUPLICATE_MODES = ['ask', 'ignore', 'copy', 'replace'];
+const libibId = (sourceId) => (sourceId && !sourceId.startsWith('mylib-') ? sourceId : null);
+const nonNull = (fields) => Object.fromEntries(Object.entries(fields).filter(([, v]) => v != null));
+
+// "Replacement copy": the book keeps its place and copy count; its details come from the import.
+function replaceDetails(existingId, fields) {
+  const { copies, added, ...rest } = nonNull(fields);
+  updateItem(existingId, rest);
+}
+
+function addCopies(existingId, fields) {
+  getDb()
+    .prepare("UPDATE items SET copies = copies + ?, updated_at = datetime('now') WHERE id = ?")
+    .run(Math.max(1, fields.copies || 1), existingId);
+  if (fields.tags) changeItemTags([existingId], { add: parseTags(fields.tags) });
+}
+
+function rememberDecision(sourceId, itemId, decision) {
+  const id = libibId(sourceId);
+  if (!id) return;
+  getDb()
+    .prepare(`INSERT INTO import_seen (source_id, item_id, decision) VALUES (?, ?, ?)
+              ON CONFLICT(source_id) DO UPDATE SET item_id = excluded.item_id, decision = excluded.decision`)
+    .run(id, itemId, decision);
+}
 
 importRouter.post('/libib', upload.single('file'), (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'Choose a CSV file to import' });
@@ -45,26 +78,26 @@ importRouter.post('/libib', upload.single('file'), (req, res) => {
 
   const opts = req.body || {};
   const mode = opts.mode === 'single' ? 'single' : 'csv';
-  const duplicates = ['update', 'add'].includes(opts.duplicates) ? opts.duplicates : 'skip';
+  const duplicates = DUPLICATE_MODES.includes(opts.duplicates) ? opts.duplicates : 'ask';
   const dryRun = opts.dry_run === 'true';
   const db = getDb();
 
-  let fixedCollection = null;
-  if (opts.collection_id) {
+  let fixedCollection = null; // null = New & Unsorted
+  const unsortedTarget = ['unsorted', '0'].includes(String(opts.collection_id ?? ''));
+  if (opts.collection_id && !unsortedTarget) {
     fixedCollection = db.prepare('SELECT * FROM collections WHERE id = ?').get(Number(opts.collection_id));
     if (!fixedCollection) return res.status(400).json({ error: 'Collection not found' });
   }
-  if (mode === 'single' && !fixedCollection && !String(opts.new_collection || '').trim()) {
-    return res.status(400).json({ error: 'Choose a collection to import into' });
-  }
 
-  const summary = { total: rows.length, created: 0, updated: 0, skipped: 0, errors: [], collections: {} };
+  const summary = {
+    total: rows.length, created: 0, updated: 0, skipped: 0, already_imported: 0,
+    copies_added: 0, replaced: 0, ignored: 0, errors: [], collections: {}, conflicts: [],
+  };
   const touched = [];
 
   const bySource = db.prepare('SELECT id FROM items WHERE source_id = ?');
   const byMylibId = db.prepare('SELECT id FROM items WHERE id = ?');
-  const byIsbn = db.prepare('SELECT id FROM items WHERE collection_id = ? AND (ean_isbn13 = ? OR upc_isbn10 = ?)');
-  const byTitle = db.prepare('SELECT id FROM items WHERE collection_id = ? AND title = ? COLLATE NOCASE AND IFNULL(creators, \'\') = ?');
+  const seen = db.prepare('SELECT item_id FROM import_seen WHERE source_id = ?');
 
   const work = db.transaction(() => {
     rows.forEach((row, index) => {
@@ -75,52 +108,76 @@ importRouter.post('/libib', upload.single('file'), (req, res) => {
           summary.errors.push({ row: index + 2, error: 'Missing title' });
           return;
         }
+        if (fields.tags) fields.tags = normalizeTagField(fields.tags);
+
         let target;
         if (mode === 'single') {
           target = fixedCollection
             ? { collection: fixedCollection, created: false }
-            : getOrCreateCollection(opts.new_collection);
+            : getOrCreateCollection(unsortedTarget ? '' : opts.new_collection);
         } else {
-          target = csvCollection
-            ? getOrCreateCollection(csvCollection)
-            : fixedCollection
-              ? { collection: fixedCollection, created: false }
-              : getOrCreateCollection(opts.new_collection || 'Imported');
+          target = csvCollection ? getOrCreateCollection(csvCollection) : { collection: fixedCollection, created: false };
         }
-        const c = target.collection;
-        const entry = (summary.collections[c.name] ??= { name: c.name, new: target.created, created: 0, updated: 0, skipped: 0 });
+        const c = target.collection; // null = New & Unsorted
+        const name = c?.name ?? UNSORTED_NAME;
+        const entry = (summary.collections[name] ??= { name, new: false, created: 0, updated: 0, skipped: 0 });
         if (target.created) entry.new = true;
 
-        let existing = null;
-        if (duplicates !== 'add') {
-          const mylibId = sourceId?.match(/^mylib-(\d+)$/)?.[1];
-          existing =
-            (sourceId && bySource.get(sourceId)) ||
-            (mylibId && byMylibId.get(Number(mylibId))) ||
-            ((fields.ean_isbn13 || fields.upc_isbn10) &&
-              byIsbn.get(c.id, fields.ean_isbn13 || '-', fields.upc_isbn10 || '-')) ||
-            (!fields.ean_isbn13 && byTitle.get(c.id, fields.title, fields.creators || '')) ||
-            null;
+        // 1. The same Libib record imported before?
+        const mylibId = sourceId?.match(/^mylib-(\d+)$/)?.[1];
+        const same =
+          (libibId(sourceId) && (bySource.get(sourceId) || seen.get(sourceId))) ||
+          (mylibId && byMylibId.get(Number(mylibId))) ||
+          null;
+        if (same) {
+          const sameId = same.id ?? same.item_id;
+          if (duplicates === 'replace' && sameId && byMylibId.get(sameId)) {
+            replaceDetails(sameId, fields);
+            summary.updated++;
+            entry.updated++;
+            touched.push(sameId);
+          } else {
+            summary.already_imported++;
+            entry.skipped++;
+          }
+          return;
         }
 
-        if (existing && duplicates === 'skip') {
-          summary.skipped++;
-          entry.skipped++;
-        } else if (existing && duplicates === 'update') {
-          const changes = Object.fromEntries(Object.entries(fields).filter(([, v]) => v != null));
-          updateItem(existing.id, { ...changes, collection_id: c.id });
-          if (sourceId && !sourceId.startsWith('mylib-')) {
-            db.prepare('UPDATE items SET source_id = ? WHERE id = ?').run(sourceId, existing.id);
+        // 2. Another copy of a book that's already in MyLib (any collection)?
+        const existing = findDuplicate(fields);
+        if (existing) {
+          if (duplicates === 'ask') {
+            summary.conflicts.push({
+              row: index + 2,
+              source_id: libibId(sourceId),
+              fields,
+              target_collection: name,
+              existing,
+            });
+          } else if (duplicates === 'ignore') {
+            summary.ignored++;
+            entry.skipped++;
+            rememberDecision(sourceId, existing.id, 'ignore');
+          } else if (duplicates === 'copy') {
+            addCopies(existing.id, fields);
+            summary.copies_added++;
+            entry.updated++;
+            rememberDecision(sourceId, existing.id, 'copy');
+          } else {
+            replaceDetails(existing.id, fields);
+            summary.replaced++;
+            entry.updated++;
+            touched.push(existing.id);
+            rememberDecision(sourceId, existing.id, 'replace');
           }
-          summary.updated++;
-          entry.updated++;
-          touched.push(existing.id);
-        } else {
-          const id = insertItem(c.id, fields, sourceId && !sourceId.startsWith('mylib-') ? sourceId : null);
-          summary.created++;
-          entry.created++;
-          touched.push(id);
+          return;
         }
+
+        // 3. A new book.
+        const id = insertItem(c?.id ?? null, fields, libibId(sourceId));
+        summary.created++;
+        entry.created++;
+        touched.push(id);
       } catch (err) {
         summary.skipped++;
         summary.errors.push({ row: index + 2, error: err.message });
@@ -146,13 +203,47 @@ importRouter.post('/libib', upload.single('file'), (req, res) => {
   res.json(summary);
 });
 
+// POST /api/import/resolve — the user's answers for the duplicates an "ask" import found.
+// Body: { decisions: [{ action: 'copy'|'replace'|'ignore', existing_id, source_id?, fields, tags?: [..] }] }
+// `tags` (the "retag it" picker) replaces the book's tags; otherwise the file's tags are added.
+importRouter.post('/resolve', (req, res) => {
+  const decisions = Array.isArray(req.body?.decisions) ? req.body.decisions : [];
+  const db = getDb();
+  const result = { copies_added: 0, replaced: 0, ignored: 0, errors: [] };
+  db.transaction(() => {
+    for (const d of decisions) {
+      const existingId = Number(d.existing_id);
+      if (!db.prepare('SELECT 1 FROM items WHERE id = ?').get(existingId)) {
+        result.errors.push({ existing_id: d.existing_id, error: 'Book not found' });
+        continue;
+      }
+      const fields = sanitizeFields(d.fields || {});
+      if (d.action === 'copy') {
+        addCopies(existingId, fields);
+        result.copies_added++;
+      } else if (d.action === 'replace') {
+        delete fields.tags;
+        replaceDetails(existingId, fields);
+        if (Array.isArray(d.tags)) changeItemTags([existingId], { remove: parseTags(getItem(existingId).tags), add: d.tags });
+        else if (d.fields?.tags) changeItemTags([existingId], { add: parseTags(d.fields.tags) });
+        result.replaced++;
+      } else {
+        result.ignored++;
+      }
+      rememberDecision(d.source_id, existingId, d.action === 'copy' || d.action === 'replace' ? d.action : 'ignore');
+    }
+  })();
+  res.json(result);
+});
+
 importRouter.get('/covers/status', (_req, res) => res.json(coverQueueStatus()));
 
 // ── Export ───────────────────────────────────────────────────────────────────
 exportRouter.get('/csv', (req, res) => {
-  const id = req.query.collection_id ? Number(req.query.collection_id) : null;
-  let name = 'all';
-  if (id) {
+  const unsorted = req.query.collection_id === 'unsorted';
+  const id = unsorted ? 'unsorted' : req.query.collection_id ? Number(req.query.collection_id) : null;
+  let name = unsorted ? 'new-and-unsorted' : 'all';
+  if (id && !unsorted) {
     const c = getDb().prepare('SELECT name FROM collections WHERE id = ?').get(id);
     if (!c) return res.status(404).json({ error: 'Collection not found' });
     name = slug(c.name);

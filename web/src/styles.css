@@ -327,3 +327,39 @@ button.star { cursor: pointer; font-size: 1.6rem; }
 .test-result { margin: 8px 0 0 23px; padding: 8px 12px; border-radius: 9px; font-size: 0.9rem; word-break: break-word; }
 .test-result.ok { background: var(--primary-soft); color: var(--success); }
 .test-result.fail { background: rgba(178, 59, 59, 0.12); color: var(--danger); }
+
+/* Side menu: collapsible Tags */
+.nav-toggle { background: none; border: 0; cursor: pointer; width: 100%; text-align: left; font: inherit; color: var(--muted); font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.06em; }
+.nav-toggle span { display: inline-flex; align-items: center; gap: 4px; }
+.nav-toggle:hover { color: var(--text); }
+.icon.rot90 { transform: rotate(90deg); }
+.icon { transition: transform 0.15s; }
+.nowrap { white-space: nowrap; }
+
+/* Tag picker */
+.tag-picker { display: flex; flex-direction: column; gap: 10px; }
+.tag-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.tag-chip { display: inline-flex; align-items: center; gap: 4px; min-height: 36px; padding: 4px 12px; border-radius: 18px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; font-size: 0.92rem; }
+.tag-chip:hover { background: var(--surface-2); }
+.tag-chip.on { background: var(--primary); border-color: var(--primary); color: var(--primary-ink); }
+.tag-new { display: flex; gap: 8px; }
+a.chip-tag { text-decoration: none; }
+
+/* Toast with an action button */
+.toast { display: flex; align-items: center; gap: 12px; }
+.toast.has-action { pointer-events: auto; }
+.toast-action { background: rgba(255,255,255,0.18); color: #fff; border: 1px solid rgba(255,255,255,0.5); border-radius: 8px; padding: 6px 12px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+.toast-action:hover { background: rgba(255,255,255,0.3); }
+
+/* Already-owned prompts */
+.duplicate { margin-top: 8px; padding: 10px 12px; border-radius: 10px; background: var(--primary-soft); display: flex; flex-direction: column; gap: 8px; }
+.duplicate-msg { display: flex; align-items: center; gap: 6px; color: var(--success); font-weight: 600; font-size: 0.9rem; }
+.duplicate-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.done-note { display: inline-flex; align-items: center; gap: 4px; color: var(--success); font-weight: 600; font-size: 0.9rem; margin-top: 4px; }
+.btn.choice.on { background: var(--primary); border-color: var(--primary); color: var(--primary-ink); }
+.conflicts { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; }
+.conflict { display: flex; gap: 14px; padding: 12px 0; border-bottom: 1px solid var(--border); }
+.conflict:last-child { border-bottom: 0; }
+.conflict-tags { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+.shelf-unsorted { border-style: dashed; }
+.result-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }

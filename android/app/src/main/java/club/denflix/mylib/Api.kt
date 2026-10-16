@@ -84,10 +84,23 @@ class Api(base: String) {
         return post("/api/lookup/cover", body.build())
     }
 
-    fun addItem(collectionId: Int, metadata: JSONObject): JSONObject =
-        postJson("/api/items", JSONObject().put("collection_id", collectionId).put("metadata", metadata))
+    /** collectionId 0 = New & Unsorted. tags are added to the new book. */
+    fun addItem(collectionId: Int, metadata: JSONObject, tags: List<String> = emptyList()): JSONObject =
+        postJson("/api/items", JSONObject().put("collection_id", collectionId).put("metadata", metadata).put("tags", JSONArray(tags)))
 
-    fun addCopy(itemId: Int): JSONObject = postJson("/api/items/$itemId/copies", JSONObject().put("delta", 1))
+    /** "Add 2nd copy": one more copy of a book we already have. */
+    fun addCopy(itemId: Int, tags: List<String> = emptyList()): JSONObject =
+        postJson("/api/items/$itemId/copies", JSONObject().put("delta", 1).put("tags", JSONArray(tags)))
+
+    /** Replace a book's tags with exactly these. */
+    fun setTags(itemId: Int, tags: List<String>): JSONObject =
+        postJson("/api/items/$itemId/tags", JSONObject().put("set", JSONArray(tags)))
+
+    /** The shared tag list. */
+    fun tags(): List<String> {
+        val arr = get("/api/tags").getJSONArray("tags")
+        return (0 until arr.length()).map { arr.getJSONObject(it).getString("name") }
+    }
 
     fun uploadCover(itemId: Int, jpeg: ByteArray): JSONObject {
         val body = MultipartBody.Builder().setType(MultipartBody.FORM)

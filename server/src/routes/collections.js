@@ -19,8 +19,16 @@ router.get('/', (_req, res) => {
   const coverStmt = db.prepare(
     `SELECT cover_file FROM items WHERE collection_id = ? AND cover_file IS NOT NULL ORDER BY created_at DESC, id DESC LIMIT 4`
   );
+  // Books not in any collection yet ("New & Unsorted").
+  const unsorted = db
+    .prepare('SELECT COUNT(*) AS item_count, COALESCE(SUM(copies), 0) AS copy_count FROM items WHERE collection_id IS NULL')
+    .get();
+  const unsortedCovers = db
+    .prepare('SELECT cover_file FROM items WHERE collection_id IS NULL AND cover_file IS NOT NULL ORDER BY created_at DESC, id DESC LIMIT 4')
+    .all();
   res.json({
     collections: rows.map((c) => ({ ...c, covers: coverStmt.all(c.id).map((r) => `/covers/${r.cover_file}`) })),
+    unsorted: { ...unsorted, covers: unsortedCovers.map((r) => `/covers/${r.cover_file}`) },
   });
 });
 
@@ -61,24 +69,32 @@ router.put('/:id', (req, res) => {
   }
 });
 
-// DELETE /api/collections/:id?move_to=<id>   — move its items first
-// DELETE /api/collections/:id?delete_items=1 — delete the items too
+// DELETE /api/collections/:id?move_to=<id>        — move its items first
+// DELETE /api/collections/:id?move_to=unsorted   — move them to New & Unsorted
+// DELETE /api/collections/:id?delete_items=1      — delete the items too
 router.delete('/:id', (req, res) => {
   const db = getDb();
   const id = Number(req.params.id);
   const count = db.prepare('SELECT COUNT(*) AS n FROM items WHERE collection_id = ?').get(id).n;
-  const moveTo = req.query.move_to ? Number(req.query.move_to) : null;
-  if (count && !moveTo && req.query.delete_items !== '1') {
+  const toUnsorted = req.query.move_to === 'unsorted' || req.query.move_to === '0';
+  const moveTo = !toUnsorted && req.query.move_to ? Number(req.query.move_to) : null;
+  const deleteItems = req.query.delete_items === '1';
+  if (count && !moveTo && !toUnsorted && !deleteItems) {
     return res.status(400).json({ error: `This collection still has ${count} items. Move or delete them first.` });
   }
   if (moveTo === id) return res.status(400).json({ error: "Can't move items into the collection being deleted" });
+  if (moveTo && !db.prepare('SELECT 1 FROM collections WHERE id = ?').get(moveTo)) {
+    return res.status(400).json({ error: 'Collection not found' });
+  }
   db.transaction(() => {
-    if (count && moveTo) {
-      db.prepare("UPDATE items SET collection_id = ?, updated_at = datetime('now') WHERE collection_id = ?").run(moveTo, id);
-    } else if (count) {
+    if (count && deleteItems) {
       for (const item of db.prepare('SELECT * FROM items WHERE collection_id = ? AND cover_file IS NOT NULL').all(id)) {
         deleteCover(item);
       }
+      db.prepare('DELETE FROM items WHERE collection_id = ?').run(id);
+    } else if (count) {
+      db.prepare("UPDATE items SET collection_id = ?, updated_at = datetime('now') WHERE collection_id = ?")
+        .run(toUnsorted ? null : moveTo, id);
     }
     db.prepare('DELETE FROM collections WHERE id = ?').run(id);
   })();

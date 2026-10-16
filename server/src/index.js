@@ -10,6 +10,8 @@ import collectionsRouter from './routes/collections.js';
 import itemsRouter from './routes/items.js';
 import lookupRouter from './routes/lookup.js';
 import { importRouter, exportRouter, backupRouter } from './routes/transfer.js';
+import tagsRouter from './routes/tags.js';
+import { UNSORTED_NAME } from './items.js';
 import { startBackupSchedule } from './backup.js';
 import { providers } from './metadata/index.js';
 
@@ -39,6 +41,7 @@ app.use('/api/lookup', lookupRouter);
 app.use('/api/import', importRouter);
 app.use('/api/export', exportRouter);
 app.use('/api/backups', backupRouter);
+app.use('/api/tags', tagsRouter);
 
 app.get('/api/stats', (_req, res) => {
   const db = getDb();
@@ -51,9 +54,9 @@ app.get('/api/stats', (_req, res) => {
     .all();
   const recent = db
     .prepare(`SELECT i.id, i.title, i.creators, i.cover_file, i.collection_id, c.name AS collection_name
-              FROM items i JOIN collections c ON c.id = i.collection_id ORDER BY i.created_at DESC, i.id DESC LIMIT 12`)
+              FROM items i LEFT JOIN collections c ON c.id = i.collection_id ORDER BY i.created_at DESC, i.id DESC LIMIT 12`)
     .all()
-    .map((i) => ({ ...i, cover: i.cover_file ? `/covers/${i.cover_file}` : null }));
+    .map((i) => ({ ...i, collection_name: i.collection_name ?? UNSORTED_NAME, cover: i.cover_file ? `/covers/${i.cover_file}` : null }));
   res.json({ items: totals.items, copies: totals.copies, collections, statuses, recent });
 });
 

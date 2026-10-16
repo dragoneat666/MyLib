@@ -31,6 +31,14 @@ class MainActivity : AppCompatActivity() {
     private lateinit var offline: View
     private var fileCallback: ValueCallback<Array<Uri>>? = null
     private var mainFrameFailed = false
+    // A page that never finishes loading (e.g. NetBird still connecting) shows the
+    // "Can't reach your library" screen instead of staying blank.
+    private val loadTimeout = android.os.Handler(android.os.Looper.getMainLooper())
+    private val showOffline = Runnable {
+        mainFrameFailed = true
+        web.stopLoading()
+        offline.visibility = View.VISIBLE
+    }
 
     private val scanLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         val added = result.data?.getIntExtra(ScanActivity.EXTRA_ADDED, 0) ?: 0
@@ -81,9 +89,12 @@ class MainActivity : AppCompatActivity() {
             override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
                 mainFrameFailed = false
                 loading.visibility = View.VISIBLE
+                loadTimeout.removeCallbacks(showOffline)
+                loadTimeout.postDelayed(showOffline, 20_000)
             }
 
             override fun onPageFinished(view: WebView, url: String?) {
+                loadTimeout.removeCallbacks(showOffline)
                 loading.visibility = View.GONE
                 offline.visibility = if (mainFrameFailed) View.VISIBLE else View.GONE
             }
@@ -135,6 +146,11 @@ class MainActivity : AppCompatActivity() {
         })
 
         if (savedInstanceState != null) web.restoreState(savedInstanceState) else web.loadUrl(base)
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        loadTimeout.removeCallbacks(showOffline)
     }
 
     override fun onSaveInstanceState(outState: Bundle) {

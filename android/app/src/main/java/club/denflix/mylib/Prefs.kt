@@ -2,17 +2,13 @@ package club.denflix.mylib
 
 import android.content.Context
 
-/** Saved settings: server address and last-used collection. */
+/** Saved settings: the server address. */
 class Prefs(context: Context) {
     private val sp = context.getSharedPreferences("mylib", Context.MODE_PRIVATE)
 
     var server: String?
         get() = sp.getString("server", null)
         set(v) = sp.edit().putString("server", v).apply()
-
-    var lastCollection: Int
-        get() = sp.getInt("lastCollection", 0)
-        set(v) = sp.edit().putInt("lastCollection", v).apply()
 
     val isConnected get() = !server.isNullOrBlank()
 

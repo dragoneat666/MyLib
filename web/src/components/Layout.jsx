@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { NavLink, Link, useLocation, useNavigate } from 'react-router-dom';
 import { useApp } from '../context.jsx';
-import { api, androidBridge } from '../api.js';
+import { api, androidBridge, prefs } from '../api.js';
 import { Icon, Modal } from './ui.jsx';
 
 export function NewCollectionModal({ onClose, onCreated }) {
@@ -39,8 +39,9 @@ export function NewCollectionModal({ onClose, onCreated }) {
 }
 
 export default function Layout({ children }) {
-  const { collections } = useApp();
+  const { collections, unsorted, tags } = useApp();
   const [navOpen, setNavOpen] = useState(false);
+  const [tagsOpen, setTagsOpen] = useState(() => prefs.get('tagsOpen', true));
   const [newColl, setNewColl] = useState(false);
   const [search, setSearch] = useState('');
   const location = useLocation();
@@ -48,8 +49,17 @@ export default function Layout({ children }) {
 
   useEffect(() => setNavOpen(false), [location.pathname, location.search]);
 
-  const total = collections.reduce((n, c) => n + c.item_count, 0);
+  const total = collections.reduce((n, c) => n + c.item_count, 0) + (unsorted.item_count || 0);
   const currentCollection = location.pathname.match(/^\/collections\/(\d+)/)?.[1];
+  // Where "Add book" / "Scan" should add to: the collection being viewed, else New & Unsorted.
+  const addTarget = currentCollection ? Number(currentCollection) : 0;
+  const currentTag = location.pathname === '/library' ? new URLSearchParams(location.search).get('tag') : null;
+  const toggleTags = () => {
+    setTagsOpen((o) => {
+      prefs.set('tagsOpen', !o);
+      return !o;
+    });
+  };
 
   const submitSearch = (e) => {
     e.preventDefault();
@@ -72,7 +82,7 @@ export default function Layout({ children }) {
           <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search your library" aria-label="Search your library" />
         </form>
         {androidBridge?.scan && (
-          <button className="btn btn-accent" onClick={() => androidBridge.scan(currentCollection ? Number(currentCollection) : 0)}>
+          <button className="btn btn-accent" onClick={() => androidBridge.scan(addTarget)}>
             <Icon name="camera" size={18} /> <span className="hide-sm">Scan</span>
           </button>
         )}
@@ -83,7 +93,12 @@ export default function Layout({ children }) {
 
       <nav className="sidebar" aria-label="Main">
         <NavLink to="/" end className="nav-item"><Icon name="home" /> Home</NavLink>
-        <NavLink to="/library" end className="nav-item"><Icon name="books" /> All books <span className="count">{total}</span></NavLink>
+        <Link to="/library" className={`nav-item ${location.pathname === '/library' && !currentTag ? 'active' : ''}`}>
+          <Icon name="books" /> All books <span className="count">{total}</span>
+        </Link>
+        <NavLink to="/unsorted" className="nav-item">
+          <Icon name="inbox" /> New &amp; Unsorted <span className="count">{unsorted.item_count || 0}</span>
+        </NavLink>
 
         <div className="nav-heading">
           <span>Collections</span>
@@ -99,6 +114,21 @@ export default function Layout({ children }) {
           ))}
           {!collections.length && <p className="muted small pad">No collections yet.</p>}
         </div>
+
+        <button className="nav-heading nav-toggle" onClick={toggleTags} aria-expanded={tagsOpen}>
+          <span><Icon name="chevron" size={14} className={tagsOpen ? 'rot90' : ''} /> Tags</span>
+        </button>
+        {tagsOpen && (
+          <div className="nav-collections">
+            {tags.map((t) => (
+              <Link key={t.id} to={`/library?tag=${encodeURIComponent(t.name)}`}
+                className={`nav-item ${currentTag?.toLowerCase() === t.name.toLowerCase() ? 'active' : ''}`}>
+                <Icon name="tag" size={18} /> <span className="truncate">{t.name}</span> <span className="count">{t.count}</span>
+              </Link>
+            ))}
+            {!tags.length && <p className="muted small pad">No tags yet.</p>}
+          </div>
+        )}
 
         <div className="nav-bottom">
           <NavLink to="/import" className="nav-item"><Icon name="upload" /> Import</NavLink>

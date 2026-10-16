@@ -1,7 +1,7 @@
 // ui.jsx — small shared pieces: icons, modal, cover image, collection picker.
 
 import { useEffect, useRef, useState } from 'react';
-import { useApp } from '../context.jsx';
+import { useApp, UNSORTED } from '../context.jsx';
 
 const PATHS = {
   menu: 'M3 6h18M3 12h18M3 18h18',
@@ -24,6 +24,9 @@ const PATHS = {
   check: 'M5 12l5 5L20 7',
   sort: 'M7 4v16M3 16l4 4 4-4M17 20V4M13 8l4-4 4 4',
   star: 'M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z',
+  tag: 'M3 12V4a1 1 0 0 1 1-1h8l9 9-9 9zM7.5 7.5h.01',
+  inbox: 'M3 13h5l1.5 3h5l1.5-3h5M5 5h14l2 8v6a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-6z',
+  chevron: 'M9 6l6 6-6 6',
 };
 
 export function Icon({ name, size = 20, className = '' }) {
@@ -81,7 +84,8 @@ export function Cover({ src, title, size = 'md' }) {
   );
 }
 
-export function CollectionSelect({ value, onChange, allowNew = true, id }) {
+// value: a collection id, or 0 for New & Unsorted. onChange gets { id } or { newName }.
+export function CollectionSelect({ value, onChange, allowNew = true, includeUnsorted = true, id }) {
   const { collections } = useApp();
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState('');
@@ -93,7 +97,7 @@ export function CollectionSelect({ value, onChange, allowNew = true, id }) {
             setName(e.target.value);
             onChange({ newName: e.target.value });
           }} />
-        <button type="button" className="btn btn-ghost" onClick={() => { setAdding(false); onChange({ id: collections[0]?.id }); }}>
+        <button type="button" className="btn btn-ghost" onClick={() => { setAdding(false); onChange({ id: includeUnsorted ? 0 : collections[0]?.id }); }}>
           Cancel
         </button>
       </div>
@@ -106,7 +110,8 @@ export function CollectionSelect({ value, onChange, allowNew = true, id }) {
         onChange({ newName: '' });
       } else onChange({ id: Number(e.target.value) });
     }}>
-      {!collections.length && <option value="">— no collections yet —</option>}
+      {includeUnsorted && <option value={0}>{UNSORTED.name}</option>}
+      {!includeUnsorted && !collections.length && <option value="">— no collections yet —</option>}
       {collections.map((c) => (
         <option key={c.id} value={c.id}>{c.name}</option>
       ))}
@@ -114,6 +119,69 @@ export function CollectionSelect({ value, onChange, allowNew = true, id }) {
     </select>
   );
 }
+
+// Choose several tags from the shared list, or create new ones.
+// value / onChange: array of tag names.
+export function TagPicker({ value, onChange }) {
+  const { tags } = useApp();
+  const [draft, setDraft] = useState('');
+  const selected = new Set(value.map((t) => t.toLowerCase()));
+  const toggle = (name) =>
+    onChange(selected.has(name.toLowerCase()) ? value.filter((t) => t.toLowerCase() !== name.toLowerCase()) : [...value, name]);
+  const addDraft = () => {
+    const name = draft.trim().replace(/\s+/g, ' ');
+    if (!name) return;
+    const existing = tags.find((t) => t.name.toLowerCase() === name.toLowerCase());
+    if (!selected.has(name.toLowerCase())) onChange([...value, existing ? existing.name : name]);
+    setDraft('');
+  };
+  // Tags typed here but not saved yet still show as chips.
+  const all = [...tags.map((t) => t.name), ...value.filter((v) => !tags.some((t) => t.name.toLowerCase() === v.toLowerCase()))];
+  return (
+    <div className="tag-picker">
+      <div className="tag-chips">
+        {all.map((name) => (
+          <button key={name} type="button" className={`tag-chip ${selected.has(name.toLowerCase()) ? 'on' : ''}`}
+            aria-pressed={selected.has(name.toLowerCase())} onClick={() => toggle(name)}>
+            {selected.has(name.toLowerCase()) && <Icon name="check" size={14} />} {name}
+          </button>
+        ))}
+        {!all.length && <span className="muted small">No tags yet — create one below.</span>}
+      </div>
+      <div className="tag-new">
+        <input value={draft} placeholder="New tag" maxLength={60} onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addDraft(); } }} />
+        <button type="button" className="btn" onClick={addDraft} disabled={!draft.trim()}><Icon name="plus" size={16} /> Add</button>
+      </div>
+    </div>
+  );
+}
+
+// Modal around TagPicker. onSave(names) may return a promise.
+export function TagDialog({ title = 'Tags', initial = [], saveLabel = 'Save tags', onSave, onClose, children }) {
+  const [value, setValue] = useState(initial);
+  const [busy, setBusy] = useState(false);
+  const save = async () => {
+    setBusy(true);
+    try {
+      await onSave(value);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Modal title={title} onClose={onClose}
+      footer={<>
+        <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
+        <button className="btn btn-primary" onClick={save} disabled={busy}>{saveLabel}</button>
+      </>}>
+      {children}
+      <TagPicker value={value} onChange={setValue} />
+    </Modal>
+  );
+}
+
+export const tagList = (tags) => String(tags || '').split(',').map((t) => t.trim()).filter(Boolean);
 
 export function Stars({ value, onChange }) {
   const n = Math.round(Number(value) || 0);

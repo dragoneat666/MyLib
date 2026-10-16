@@ -1,7 +1,9 @@
 // Settings.jsx — Android app, book information sources (with Test buttons).
 
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { api, androidBridge } from '../api.js';
+import { useApp } from '../context.jsx';
 import { Icon } from '../components/ui.jsx';
 
 const SOURCE_HELP = {
@@ -33,6 +35,8 @@ export default function Settings() {
           {providers.map((p) => <SourceRow key={p.id} source={p} />)}
         </ul>
       </section>
+
+      <TagsSection />
 
       <section className="card stack">
         <h2>Android app</h2>
@@ -98,5 +102,81 @@ function SourceRow({ source }) {
         </p>
       )}
     </li>
+  );
+}
+
+// Settings → Tags: the shared tag list. Renaming changes every book with that tag;
+// renaming to an existing tag's name merges them.
+function TagsSection() {
+  const { tags, toast, libraryChanged } = useApp();
+  const [editing, setEditing] = useState(null); // { id, name }
+  const [draft, setDraft] = useState('');
+
+  const call = async (fn, message) => {
+    try {
+      await fn();
+      libraryChanged();
+      if (message) toast(message, 'success');
+    } catch (err) {
+      toast(err.message, 'error');
+    }
+  };
+  const create = (e) => {
+    e.preventDefault();
+    if (!draft.trim()) return;
+    call(() => api.post('/api/tags', { name: draft }), `Added tag “${draft.trim()}”`);
+    setDraft('');
+  };
+  const rename = (e) => {
+    e.preventDefault();
+    call(() => api.put(`/api/tags/${editing.id}`, { name: editing.name }), 'Tag renamed');
+    setEditing(null);
+  };
+  const remove = (t) => {
+    if (!confirm(`Delete the tag “${t.name}”? It will be removed from ${t.count} ${t.count === 1 ? 'book' : 'books'}.`)) return;
+    call(() => api.del(`/api/tags/${t.id}`), `Deleted “${t.name}”`);
+  };
+
+  return (
+    <section className="card stack">
+      <h2>Tags</h2>
+      <p className="muted small">
+        Tags are shared: once a tag exists, it's offered everywhere you tag books. Renaming a tag changes it on every book;
+        renaming it to the name of another tag merges the two.
+      </p>
+      <table className="simple-table">
+        <tbody>
+          {tags.map((t) => (
+            <tr key={t.id}>
+              <td>
+                {editing?.id === t.id ? (
+                  <form className="row gap" onSubmit={rename}>
+                    <input autoFocus value={editing.name} onChange={(e) => setEditing({ ...editing, name: e.target.value })} />
+                    <button className="btn btn-small btn-primary" disabled={!editing.name.trim()}>Save</button>
+                    <button type="button" className="btn btn-small btn-ghost" onClick={() => setEditing(null)}>Cancel</button>
+                  </form>
+                ) : (
+                  <Link to={`/library?tag=${encodeURIComponent(t.name)}`}><Icon name="tag" size={16} /> {t.name}</Link>
+                )}
+              </td>
+              <td className="muted small">{t.count} {t.count === 1 ? 'book' : 'books'}</td>
+              <td className="right nowrap">
+                {editing?.id !== t.id && (
+                  <>
+                    <button className="btn btn-small" onClick={() => setEditing({ id: t.id, name: t.name })}>Rename</button>{' '}
+                    <button className="btn btn-small danger" onClick={() => remove(t)}>Delete</button>
+                  </>
+                )}
+              </td>
+            </tr>
+          ))}
+          {!tags.length && <tr><td className="muted">No tags yet.</td></tr>}
+        </tbody>
+      </table>
+      <form className="row gap" onSubmit={create}>
+        <input value={draft} placeholder="New tag" maxLength={60} onChange={(e) => setDraft(e.target.value)} />
+        <button className="btn btn-primary" disabled={!draft.trim()}><Icon name="plus" size={18} /> Add tag</button>
+      </form>
+    </section>
   );
 }

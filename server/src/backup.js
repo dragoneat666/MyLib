@@ -47,13 +47,15 @@ export function sqlDump(db = getDb()) {
   return out.join('\n');
 }
 
+// collectionId: a collection id, 'unsorted' for New & Unsorted, or null for everything.
+// Unsorted books have an empty "collection" column.
 export function libraryCsv(collectionId = null) {
   const db = getDb();
-  const where = collectionId ? 'WHERE i.collection_id = ?' : '';
+  const where = collectionId === 'unsorted' ? 'WHERE i.collection_id IS NULL' : collectionId ? 'WHERE i.collection_id = ?' : '';
   const items = db
-    .prepare(`SELECT i.*, c.name AS collection_name FROM items i JOIN collections c ON c.id = i.collection_id
-              ${where} ORDER BY c.name COLLATE NOCASE, i.title COLLATE NOCASE`)
-    .all(...(collectionId ? [collectionId] : []));
+    .prepare(`SELECT i.*, c.name AS collection_name FROM items i LEFT JOIN collections c ON c.id = i.collection_id
+              ${where} ORDER BY c.name IS NULL, c.name COLLATE NOCASE, i.title COLLATE NOCASE`)
+    .all(...(collectionId && collectionId !== 'unsorted' ? [collectionId] : []));
   return itemsToCsv(items);
 }
 

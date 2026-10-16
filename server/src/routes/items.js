@@ -4,8 +4,9 @@ import { Router } from 'express';
 import multer from 'multer';
 import { getDb } from '../db.js';
 import {
-  present, getItem, getOrCreateCollection, fieldsFromMetadata, sanitizeFields, insertItem, updateItem, findOwned,
+  present, getItem, resolveCollection, fieldsFromMetadata, sanitizeFields, insertItem, updateItem, findOwned,
 } from '../items.js';
+import { changeItemTags, parseTags } from '../tags.js';
 import { fetchCoverForItem, saveCover, deleteCover, queueCovers } from '../covers.js';
 import { lookupIsbn } from '../metadata/index.js';
 
@@ -32,7 +33,8 @@ router.get('/', (req, res) => {
   const params = [];
   const { collection, q, status, tag, missing } = req.query;
 
-  if (collection) {
+  if (collection === 'unsorted') where.push('i.collection_id IS NULL');
+  else if (collection) {
     where.push('i.collection_id = ?');
     params.push(Number(collection));
   }
@@ -69,7 +71,7 @@ router.get('/', (req, res) => {
     .prepare(`SELECT i.id, i.collection_id, c.name AS collection_name, i.item_type, i.title, i.creators,
                      i.first_name, i.last_name, i.ean_isbn13, i.upc_isbn10, i.publisher, i.publish_date,
                      i.status, i.rating, i.tags, i.copies, i.series, i.volume, i.added, i.cover_file, i.length
-              FROM items i JOIN collections c ON c.id = i.collection_id
+              FROM items i LEFT JOIN collections c ON c.id = i.collection_id
               ${whereSql} ORDER BY ${order} LIMIT ? OFFSET ?`)
     .all(...params, limit, offset);
   res.json({ total, items: items.map(present) });
@@ -80,15 +82,6 @@ router.get('/owned', (req, res) => {
   res.json({ owned: findOwned(req.query.isbn || '') });
 });
 
-// GET /api/items/tags — every tag in use, for filters and autocomplete
-router.get('/tags', (_req, res) => {
-  const counts = new Map();
-  for (const { tags } of getDb().prepare("SELECT tags FROM items WHERE tags IS NOT NULL AND tags != ''").all()) {
-    for (const t of tags.split(',').map((s) => s.trim()).filter(Boolean)) counts.set(t, (counts.get(t) || 0) + 1);
-  }
-  res.json({ tags: [...counts].map(([name, count]) => ({ name, count })).sort((a, b) => a.name.localeCompare(b.name)) });
-});
-
 router.get('/:id', (req, res) => {
   const item = getItem(req.params.id);
   if (!item) return res.status(404).json({ error: 'Item not found' });
@@ -96,16 +89,13 @@ router.get('/:id', (req, res) => {
 });
 
 // POST /api/items
-// Body: { collection_id | collection_name, metadata?: <lookup result>, ...item fields, fetch_cover?: true }
+// Body: { collection_id | collection_name (neither = New & Unsorted), metadata?: <lookup result>,
+//         ...item fields, tags?: [..], fetch_cover?: true }
 router.post('/', async (req, res) => {
   const body = req.body || {};
-  let collectionId = Number(body.collection_id) || null;
-  if (!collectionId) {
-    if (!body.collection_name) return res.status(400).json({ error: 'Choose a collection' });
-    collectionId = getOrCreateCollection(body.collection_name).collection.id;
-  } else if (!getDb().prepare('SELECT 1 FROM collections WHERE id = ?').get(collectionId)) {
-    return res.status(400).json({ error: 'Collection not found' });
-  }
+  const target = resolveCollection(body);
+  if (target.error) return res.status(400).json({ error: target.error });
+  const collectionId = target.id;
   // Fields typed by the user win over the looked-up metadata.
   const fields = sanitizeFields(fieldsFromMetadata(body.metadata || {}));
   for (const [k, v] of Object.entries(sanitizeFields(body))) if (v != null) fields[k] = v;
@@ -115,9 +105,10 @@ router.post('/', async (req, res) => {
   const id = insertItem(collectionId, fields);
   const item = getItem(id);
   if (body.fetch_cover !== false && (item.cover_url || item.ean_isbn13)) {
-    // Try right away so the new book shows its cover; fall back to the queue.
+    // Give the cover a moment so the new book shows it; a slow download keeps
+    // going in the background so scanning a stack of books stays quick.
     try {
-      await Promise.race([fetchCoverForItem(item), new Promise((r) => setTimeout(r, 8000))]);
+      await Promise.race([fetchCoverForItem(item), new Promise((r) => setTimeout(r, 2500))]);
     } catch {
       queueCovers([id]);
     }
@@ -130,17 +121,32 @@ router.put('/:id', (req, res) => {
   if (!item) return res.status(404).json({ error: 'Item not found' });
   const fields = sanitizeFields(req.body || {});
   if ('title' in fields && !fields.title) return res.status(400).json({ error: 'Title is required' });
-  if (req.body?.collection_id) fields.collection_id = Number(req.body.collection_id);
+  if (req.body && 'collection_id' in req.body) {
+    const target = resolveCollection({ collection_id: req.body.collection_id });
+    if (target.error) return res.status(400).json({ error: target.error });
+    fields.collection_id = target.id;
+  }
   updateItem(item.id, fields);
   res.json(present(getItem(item.id)));
 });
 
-// POST /api/items/:id/copies { delta: 1 } — quick "+1 copy" from the scanner
+// POST /api/items/:id/copies { delta: 1, tags?: [..] } — "Add a 2nd copy"
 router.post('/:id/copies', (req, res) => {
   const item = getItem(req.params.id);
   if (!item) return res.status(404).json({ error: 'Item not found' });
   const copies = Math.max(0, (item.copies || 0) + (parseInt(req.body?.delta, 10) || 1));
   updateItem(item.id, { copies });
+  if (req.body?.tags) changeItemTags([item.id], { add: req.body.tags });
+  res.json(present(getItem(item.id)));
+});
+
+// POST /api/items/:id/tags { add?: [..], remove?: [..] } or { set: [..] }
+router.post('/:id/tags', (req, res) => {
+  const item = getItem(req.params.id);
+  if (!item) return res.status(404).json({ error: 'Item not found' });
+  const body = req.body || {};
+  if (body.set) changeItemTags([item.id], { remove: parseTags(item.tags), add: body.set });
+  else changeItemTags([item.id], { add: body.add || [], remove: body.remove || [] });
   res.json(present(getItem(item.id)));
 });
 
@@ -197,7 +203,7 @@ router.post('/:id/refresh', async (req, res) => {
   res.json({ item: present(getItem(item.id)), changed: Object.keys(changes) });
 });
 
-// POST /api/items/bulk { ids: [], action: 'move'|'delete'|'status'|'add_tag'|'fetch_covers', collection_id, status, tag }
+// POST /api/items/bulk { ids: [], action: 'move'|'delete'|'status'|'add_tags'|'remove_tags'|'fetch_covers', collection_id, status, tags }
 router.post('/bulk', (req, res) => {
   const { ids = [], action } = req.body || {};
   const list = ids.map(Number).filter(Boolean);
@@ -206,9 +212,10 @@ router.post('/bulk', (req, res) => {
   const marks = list.map(() => '?').join(', ');
   switch (action) {
     case 'move': {
-      const target = Number(req.body.collection_id);
-      if (!db.prepare('SELECT 1 FROM collections WHERE id = ?').get(target)) return res.status(400).json({ error: 'Collection not found' });
-      db.prepare(`UPDATE items SET collection_id = ?, updated_at = datetime('now') WHERE id IN (${marks})`).run(target, ...list);
+      // collection_id 0 / "unsorted" moves them to New & Unsorted
+      const target = resolveCollection({ collection_id: req.body.collection_id });
+      if (target.error) return res.status(400).json({ error: target.error });
+      db.prepare(`UPDATE items SET collection_id = ?, updated_at = datetime('now') WHERE id IN (${marks})`).run(target.id, ...list);
       break;
     }
     case 'delete':
@@ -222,18 +229,16 @@ router.post('/bulk', (req, res) => {
     case 'status':
       db.prepare(`UPDATE items SET status = ?, updated_at = datetime('now') WHERE id IN (${marks})`).run(req.body.status || null, ...list);
       break;
-    case 'add_tag': {
-      const tag = String(req.body.tag || '').trim();
-      if (!tag) return res.status(400).json({ error: 'Tag is required' });
-      const stmt = db.prepare("UPDATE items SET tags = ?, updated_at = datetime('now') WHERE id = ?");
-      db.transaction(() => {
-        for (const item of db.prepare(`SELECT id, tags FROM items WHERE id IN (${marks})`).all(...list)) {
-          const tags = (item.tags || '').split(',').map((t) => t.trim()).filter(Boolean);
-          if (!tags.includes(tag)) stmt.run([...tags, tag].join(', '), item.id);
-        }
-      })();
+    case 'add_tag': // older single-tag form
+    case 'add_tags': {
+      const tags = parseTags(req.body.tags ?? req.body.tag);
+      if (!tags.length) return res.status(400).json({ error: 'Choose at least one tag' });
+      changeItemTags(list, { add: tags });
       break;
     }
+    case 'remove_tags':
+      changeItemTags(list, { remove: parseTags(req.body.tags ?? req.body.tag) });
+      break;
     case 'fetch_covers':
       queueCovers(list);
       break;

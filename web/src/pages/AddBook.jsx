@@ -1,35 +1,28 @@
 // AddBook.jsx — add books by ISBN / title search, or by typing them in.
+// New books go to New & Unsorted unless another collection is picked.
 
 import { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { api, prefs, androidBridge, STATUSES } from '../api.js';
+import { api, androidBridge, STATUSES } from '../api.js';
 import { useApp } from '../context.jsx';
-import { CollectionSelect, Cover, Icon } from '../components/ui.jsx';
+import { CollectionSelect, Cover, Icon, TagDialog, tagList } from '../components/ui.jsx';
 import ItemDetail from '../components/ItemDetail.jsx';
 
 export default function AddBook() {
   const { collections, toast, libraryChanged, refreshCollections } = useApp();
   const [params] = useSearchParams();
-  const initialColl = Number(params.get('collection')) || prefs.get('lastCollection', null);
-  const [target, setTarget] = useState({ id: initialColl });
+  const [target, setTarget] = useState({ id: Number(params.get('collection')) || 0 });
   const [query, setQuery] = useState(params.get('q') || '');
   const [results, setResults] = useState(null);
   const [searching, setSearching] = useState(false);
-  const [added, setAdded] = useState({}); // result key -> item id
+  const [done, setDone] = useState({}); // result key -> { itemId, note }
   const [editId, setEditId] = useState(null);
+  const [tagging, setTagging] = useState(null); // { id, title, tags, replace? }
   const [manual, setManual] = useState(false);
   const inputRef = useRef(null);
 
-  // Default to a real collection once the list has loaded.
   useEffect(() => {
-    if (!('newName' in target) && !collections.some((c) => c.id === target.id) && collections.length) {
-      setTarget({ id: collections[0].id });
-    }
-  }, [collections, target]);
-
-  useEffect(() => {
-    const c = Number(params.get('collection'));
-    if (c) setTarget({ id: c });
+    setTarget({ id: Number(params.get('collection')) || 0 });
     // ?q=… (e.g. from the phone scanner) searches straight away.
     const q = params.get('q');
     if (q) {
@@ -38,9 +31,9 @@ export default function AddBook() {
     }
   }, [params]);
 
-  const targetName = target.newName?.trim() || collections.find((c) => c.id === target.id)?.name;
-  const targetBody = () => (target.newName ? { collection_name: target.newName.trim() } : { collection_id: target.id });
-  const ready = !!(target.newName?.trim() || target.id);
+  const targetName = target.newName?.trim() || collections.find((c) => c.id === target.id)?.name || 'New & Unsorted';
+  const targetBody = () => (target.newName ? { collection_name: target.newName.trim() } : { collection_id: target.id || 0 });
+  const ready = !('newName' in target) || !!target.newName.trim();
 
   const search = async (e, text = query) => {
     e?.preventDefault();
@@ -48,6 +41,7 @@ export default function AddBook() {
     if (!q) return;
     setSearching(true);
     setResults(null);
+    setDone({});
     try {
       const data = await api.get(`/api/lookup/search?q=${encodeURIComponent(q)}`);
       setResults(data.results);
@@ -61,30 +55,50 @@ export default function AddBook() {
   const afterAdd = async (item) => {
     if (target.newName) {
       await refreshCollections();
-      setTarget({ id: item.collection_id });
+      setTarget({ id: item.collection_id || 0 });
     }
-    prefs.set('lastCollection', item.collection_id);
     libraryChanged();
+    toast(`Added “${item.title}” to ${item.collection_name}`, 'success', {
+      action: { label: 'Add tag', onClick: () => setTagging({ id: item.id, title: item.title, tags: tagList(item.tags) }) },
+    });
   };
 
   const add = async (r, key) => {
-    if (!ready) return toast('Choose a collection first', 'error');
     try {
       const item = await api.post('/api/items', { ...targetBody(), metadata: r });
-      setAdded((a) => ({ ...a, [key]: item.id }));
-      toast(`Added to ${item.collection_name}`, 'success');
+      setDone((d) => ({ ...d, [key]: { itemId: item.id, title: item.title, tags: item.tags, note: `Added to ${item.collection_name}` } }));
       await afterAdd(item);
     } catch (err) {
       toast(err.message, 'error');
     }
   };
 
-  const addCopy = async (owned) => {
+  // The three choices when the book is already in MyLib.
+  const addCopy = async (owned, key) => {
     try {
       const item = await api.post(`/api/items/${owned.id}/copies`, { delta: 1 });
-      toast(`${item.title}: now ${item.copies} copies`, 'success');
+      setDone((d) => ({ ...d, [key]: { itemId: item.id, title: item.title, tags: item.tags, note: `Now ${item.copies} copies` } }));
       libraryChanged();
-      search();
+      toast(`${item.title}: now ${item.copies} copies`, 'success', {
+        action: { label: 'Add tag', onClick: () => setTagging({ id: item.id, title: item.title, tags: tagList(item.tags) }) },
+      });
+    } catch (err) {
+      toast(err.message, 'error');
+    }
+  };
+  const replaceCopy = (owned, key) =>
+    setTagging({ id: owned.id, title: owned.title, tags: tagList(owned.tags), replace: true, key });
+  const ignore = (key) => setDone((d) => ({ ...d, [key]: { note: 'Ignored' } }));
+
+  const saveTags = async (list) => {
+    try {
+      const item = await api.post(`/api/items/${tagging.id}/tags`, { set: list });
+      if (tagging.replace) {
+        setDone((d) => ({ ...d, [tagging.key]: { itemId: item.id, title: item.title, tags: item.tags, note: 'Kept as a replacement copy' } }));
+      }
+      toast(list.length ? `Tagged “${item.title}”: ${list.join(', ')}` : `Tags cleared on “${item.title}”`, 'success');
+      setTagging(null);
+      libraryChanged();
     } catch (err) {
       toast(err.message, 'error');
     }
@@ -106,7 +120,7 @@ export default function AddBook() {
 
       <div className="card stack">
         <label className="field">
-          <span>Add to collection</span>
+          <span>Add to</span>
           <CollectionSelect value={target.id} onChange={setTarget} />
         </label>
         <form className="search-row" onSubmit={search}>
@@ -119,11 +133,11 @@ export default function AddBook() {
         <button className="link-btn" onClick={() => setManual((m) => !m)}>
           {manual ? 'Hide manual entry' : "Can't find it? Enter it by hand"}
         </button>
-        {manual && <ManualForm initialIsbn={/^[\dXx-]{10,17}$/.test(query.trim()) ? query.trim() : ''} ready={ready} targetBody={targetBody} onAdded={async (item) => {
-          toast(`Added to ${item.collection_name}`, 'success');
-          await afterAdd(item);
-          setEditId(item.id);
-        }} />}
+        {manual && (
+          <ManualForm initialIsbn={/^[\dXx-]{10,17}$/.test(query.trim()) ? query.trim() : ''} ready={ready}
+            targetBody={targetBody} onAdded={afterAdd}
+            onCopy={(owned) => addCopy(owned, 'manual')} onReplace={(owned) => replaceCopy(owned, 'manual')} />
+        )}
       </div>
 
       {searching && <p className="muted center pad">Looking that up…</p>}
@@ -132,6 +146,8 @@ export default function AddBook() {
         <ul className="results">
           {results.map((r, i) => {
             const key = r.isbn13 || `${r.title}-${i}`;
+            const state = done[key];
+            const owned = r.owned || [];
             return (
               <li key={key} className="result">
                 <Cover src={r.cover_url} title={r.title} size="sm" />
@@ -141,22 +157,25 @@ export default function AddBook() {
                   <span className="muted small">
                     {[r.publisher, r.publish_date, r.pages && `${r.pages} pages`, r.isbn13].filter(Boolean).join(' · ')}
                   </span>
-                  {r.owned?.length > 0 && (
-                    <div className="owned">
-                      <Icon name="check" size={16} /> You have this in{' '}
-                      {r.owned.map((o) => `${o.collection_name}${o.copies > 1 ? ` (×${o.copies})` : ''}`).join(', ')}
-                      <button className="btn btn-small" onClick={() => addCopy(r.owned[0])}>+1 copy</button>
-                    </div>
+                  {owned.length > 0 && !state && (
+                    <DuplicateChoice owned={owned} onReplace={() => replaceCopy(owned[0], key)}
+                      onCopy={() => addCopy(owned[0], key)} onIgnore={() => ignore(key)} />
                   )}
+                  {state && <span className="done-note"><Icon name="check" size={16} /> {state.note}</span>}
                 </div>
                 <div className="result-actions">
-                  {added[key] ? (
-                    <button className="btn btn-small" onClick={() => setEditId(added[key])}><Icon name="edit" size={16} /> Edit</button>
-                  ) : (
+                  {state?.itemId ? (
+                    <>
+                      <button className="btn btn-small" onClick={() => setTagging({ id: state.itemId, title: state.title, tags: tagList(state.tags) })}>
+                        <Icon name="tag" size={16} /> Add tag
+                      </button>
+                      <button className="btn btn-small" onClick={() => setEditId(state.itemId)}><Icon name="edit" size={16} /> Edit</button>
+                    </>
+                  ) : !state && !owned.length ? (
                     <button className="btn btn-primary btn-small" onClick={() => add(r, key)} disabled={!ready}>
-                      <Icon name="plus" size={16} /> Add{targetName ? ` to ${targetName}` : ''}
+                      <Icon name="plus" size={16} /> Add to {targetName}
                     </button>
-                  )}
+                  ) : null}
                 </div>
               </li>
             );
@@ -164,24 +183,61 @@ export default function AddBook() {
         </ul>
       )}
       {editId && <ItemDetail id={editId} startEditing onClose={() => setEditId(null)} />}
+      {tagging && (
+        <TagDialog
+          title={tagging.replace ? `Replacement copy — retag “${tagging.title}”` : `Tags for “${tagging.title}”`}
+          initial={tagging.tags} onClose={() => setTagging(null)} onSave={saveTags}>
+          {tagging.replace && <p className="muted small">The copy count stays the same. Pick the tags this copy should have.</p>}
+        </TagDialog>
+      )}
     </div>
   );
 }
 
-function ManualForm({ ready, targetBody, onAdded, initialIsbn = '' }) {
+// "You already have this" with the three choices.
+export function DuplicateChoice({ owned, onReplace, onCopy, onIgnore }) {
+  const where = owned.map((o) => `${o.collection_name}${o.copies > 1 ? ` (×${o.copies})` : ''}`).join(', ');
+  return (
+    <div className="duplicate">
+      <div className="duplicate-msg"><Icon name="check" size={16} /> Already in MyLib: {where}</div>
+      <div className="duplicate-actions">
+        <button className="btn btn-small" onClick={onReplace}>Replacement copy — retag it</button>
+        <button className="btn btn-small btn-primary" onClick={onCopy}>Add 2nd copy</button>
+        <button className="btn btn-small btn-ghost" onClick={onIgnore}>Ignore</button>
+      </div>
+    </div>
+  );
+}
+
+function ManualForm({ ready, targetBody, onAdded, onCopy, onReplace, initialIsbn = '' }) {
   const { toast } = useApp();
   const empty = { title: '', creators: '', series: '', volume: '', ean_isbn13: '', publisher: '', publish_date: '', length: '', status: '' };
   const [form, setForm] = useState({ ...empty, ean_isbn13: initialIsbn });
-  const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
+  const [owned, setOwned] = useState(null);
+  const set = (k) => (e) => {
+    setForm((f) => ({ ...f, [k]: e.target.value }));
+    if (k === 'ean_isbn13') setOwned(null);
+  };
   const submit = async (e) => {
     e.preventDefault();
     try {
+      // Same ISBN already in MyLib? Ask first.
+      if (form.ean_isbn13.trim() && owned === null) {
+        const found = (await api.get(`/api/items/owned?isbn=${encodeURIComponent(form.ean_isbn13.trim())}`)).owned;
+        if (found.length) return setOwned(found);
+      }
       const item = await api.post('/api/items', { ...targetBody(), ...form });
       setForm(empty);
+      setOwned(null);
       onAdded(item);
     } catch (err) {
       toast(err.message, 'error');
     }
+  };
+  const finish = (fn) => () => {
+    fn(owned[0]);
+    setForm(empty);
+    setOwned(null);
   };
   return (
     <form className="field-grid" onSubmit={submit}>
@@ -199,8 +255,14 @@ function ManualForm({ ready, targetBody, onAdded, initialIsbn = '' }) {
           {STATUSES.map((s) => <option key={s}>{s}</option>)}
         </select>
       </label>
+      {owned?.length > 0 && (
+        <div className="field wide">
+          <DuplicateChoice owned={owned} onReplace={finish(onReplace)} onCopy={finish(onCopy)}
+            onIgnore={() => { setForm(empty); setOwned(null); }} />
+        </div>
+      )}
       <div className="field wide row-end">
-        <button className="btn btn-primary" disabled={!ready || !form.title.trim()}><Icon name="plus" size={18} /> Add book</button>
+        <button className="btn btn-primary" disabled={!ready || !form.title.trim() || owned?.length > 0}><Icon name="plus" size={18} /> Add book</button>
       </div>
     </form>
   );

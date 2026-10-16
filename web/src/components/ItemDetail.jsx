@@ -1,9 +1,10 @@
 // ItemDetail.jsx — view / edit one book (modal).
 
 import { useEffect, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { api, STATUSES } from '../api.js';
-import { useApp } from '../context.jsx';
-import { Cover, Icon, Modal, Stars } from './ui.jsx';
+import { useApp, UNSORTED } from '../context.jsx';
+import { Cover, Icon, Modal, Stars, TagPicker, tagList } from './ui.jsx';
 
 const FIELD_GROUPS = [
   {
@@ -31,7 +32,7 @@ const FIELD_GROUPS = [
       ['completed', 'Completed', { type: 'date' }],
       ['copies', 'Copies', { type: 'number' }],
       ['added', 'Added', { type: 'date' }],
-      ['tags', 'Tags', { wide: true, hint: 'Comma separated' }],
+      ['tags', 'Tags', { wide: true, tags: true }],
       ['item_group', 'Group / location', { hint: 'e.g. shelf or room' }],
       ['price', 'Price'],
       ['notes', 'Notes', { wide: true, textarea: 3 }],
@@ -71,7 +72,7 @@ export default function ItemDetail({ id, onClose, startEditing = false }) {
     try {
       const body = {};
       for (const g of FIELD_GROUPS) for (const [k] of g.fields) body[k] = form[k] ?? '';
-      body.collection_id = form.collection_id;
+      body.collection_id = form.collection_id ?? 0;
       const updated = await api.put(`/api/items/${id}`, body);
       setItem(updated);
       setForm(updated);
@@ -169,7 +170,8 @@ export default function ItemDetail({ id, onClose, startEditing = false }) {
           <form className="detail-form" onSubmit={save}>
             <label className="field">
               <span>Collection</span>
-              <select value={form.collection_id} onChange={(e) => set('collection_id', Number(e.target.value))}>
+              <select value={form.collection_id ?? 0} onChange={(e) => set('collection_id', Number(e.target.value) || null)}>
+                <option value={0}>{UNSORTED.name}</option>
                 {collections.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
             </label>
@@ -177,9 +179,11 @@ export default function ItemDetail({ id, onClose, startEditing = false }) {
               <fieldset key={g.title} className="field-grid">
                 <legend>{g.title}</legend>
                 {g.fields.map(([k, label, o = {}]) => (
-                  <label key={k} className={`field ${o.wide ? 'wide' : ''}`}>
+                  <Field key={k} as={o.tags ? 'div' : 'label'} className={`field ${o.wide ? 'wide' : ''}`}>
                     <span>{label}</span>
-                    {o.textarea ? (
+                    {o.tags ? (
+                      <TagPicker value={tagList(form[k])} onChange={(list) => set(k, list.join(', '))} />
+                    ) : o.textarea ? (
                       <textarea rows={o.textarea} value={form[k] ?? ''} onChange={(e) => set(k, e.target.value)} />
                     ) : o.select ? (
                       <select value={form[k] ?? ''} onChange={(e) => set(k, e.target.value)}>
@@ -194,7 +198,7 @@ export default function ItemDetail({ id, onClose, startEditing = false }) {
                         min={o.type === 'number' ? 0 : undefined} />
                     )}
                     {o.hint && <small className="muted">{o.hint}</small>}
-                  </label>
+                  </Field>
                 ))}
               </fieldset>
             ))}
@@ -208,7 +212,9 @@ export default function ItemDetail({ id, onClose, startEditing = false }) {
               {item.status && <span className="chip">{item.status}</span>}
               {item.copies > 1 && <span className="chip">{item.copies} copies</span>}
               {item.copies === 0 && <span className="chip chip-warn">0 copies</span>}
-              {item.tags?.split(',').filter((t) => t.trim()).map((t) => <span key={t} className="chip chip-tag">{t.trim()}</span>)}
+              {tagList(item.tags).map((t) => (
+                <Link key={t} to={`/library?tag=${encodeURIComponent(t)}`} className="chip chip-tag" onClick={onClose}>{t}</Link>
+              ))}
             </div>
             {Number(item.rating) > 0 && <Stars value={item.rating} />}
             {item.description && <p className="detail-desc">{item.description}</p>}
@@ -236,4 +242,9 @@ export default function ItemDetail({ id, onClose, startEditing = false }) {
       </div>
     </Modal>
   );
+}
+
+// A form field wrapper: <label> normally, <div> when it holds buttons (the tag picker).
+function Field({ as: Tag = 'label', children, ...rest }) {
+  return <Tag {...rest}>{children}</Tag>;
 }

@@ -3,14 +3,20 @@
 A self-hosted home library, like [Libib](https://www.libib.com/), where you own the data.
 
 - **Collections** (e.g. *American Girl*, *Magic Tree House*), each with its own shelf of books
+- **New & Unsorted**: new books land here (unless a collection is picked) until you move them into a collection
 - **Add books** on the website by ISBN, title/author search, or by typing them in
 - **Android app**: the same library on the phone, plus a camera mode that recognises a book
   from its **barcode** or from a photo of its **front cover**, and warns you if you already own it
-- **Libib CSV import** (re-importing the same file is safe: duplicates are skipped)
+- **Already own it?** When a book being added or imported is already in MyLib, you choose:
+  *Replacement copy — retag it* (copy count stays, pick its tags), *Add 2nd copy*, or *Ignore*
+- **Libib CSV import** (re-importing the same file is safe: books already imported from it are skipped, and
+  your answers about second copies are remembered)
+- **Tags** as a shared list: pick several at once, *Add tag* right after adding a book, a Tags section in the
+  side menu, rename/merge/delete in Settings → Tags
 - **Export** one collection or the whole library as CSV (Libib's format), or the whole database as SQL
 - **Nightly backups**: `mylib_YYYY-MM-DD.sql` + `mylib_YYYY-MM-DD.csv` written to a folder on the host
 - No logins (like PokeTracker): it's only reachable on the home network / NetBird
-- Covers saved locally, reading status, ratings, tags, notes, copies
+- Covers saved locally, reading status, ratings, notes, copies
 
 One Docker container (Node.js + SQLite + the React web app). Images are built by GitHub Actions:
 `ghcr.io/dragoneat666/mylib:latest`.
@@ -99,7 +105,11 @@ The app shows the same library as the website. The orange **camera** button open
   title and author and the server finds matching books. If the text was misread, fix the words in the
   search box on the results sheet. With `ANTHROPIC_API_KEY` set, the photo itself is identified, which
   works much better for covers with stylised titles.
-- "**Adding to**" at the top chooses the collection. **Type it in** opens the manual form.
+- "**Adding to**" starts on **New & Unsorted** (or on the collection you opened the scanner from) and stays on
+  whatever you pick until you close the scanner. **Type it in** opens the manual form.
+- **Tag every book I scan** puts the chosen tags (e.g. "Garage sale") on every book added in that session.
+- After each book, the "Added …" message has an **Add tag** button. If the book is already in MyLib you get
+  *Replacement copy — retag it*, *Add 2nd copy* or *Ignore*.
 
 ### Signing key (one-time setup)
 

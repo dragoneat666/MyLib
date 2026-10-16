@@ -4,8 +4,8 @@ import { useApp } from '../context.jsx';
 import { Icon } from '../components/ui.jsx';
 
 export default function ExportPage() {
-  const { collections } = useApp();
-  const total = collections.reduce((n, c) => n + c.item_count, 0);
+  const { collections, unsorted } = useApp();
+  const total = collections.reduce((n, c) => n + c.item_count, 0) + (unsorted.item_count || 0);
   return (
     <div className="page narrow">
       <h1>Export</h1>
@@ -29,6 +29,15 @@ export default function ExportPage() {
 
       <h2>One collection</h2>
       <div className="card">
+        {unsorted.item_count > 0 && (
+          <div className="export-row">
+            <div>
+              <strong>New &amp; Unsorted</strong>
+              <div className="muted small">{unsorted.item_count} titles</div>
+            </div>
+            <a className="btn" href="/api/export/csv?collection_id=unsorted"><Icon name="download" size={18} /> CSV</a>
+          </div>
+        )}
         {collections.map((c) => (
           <div className="export-row" key={c.id}>
             <div>

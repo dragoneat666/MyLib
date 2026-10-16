@@ -7,7 +7,7 @@ import { NewCollectionModal } from '../components/Layout.jsx';
 import ItemDetail from '../components/ItemDetail.jsx';
 
 export default function Home() {
-  const { collections, version } = useApp();
+  const { collections, unsorted, version } = useApp();
   const [stats, setStats] = useState(null);
   const [newColl, setNewColl] = useState(false);
   const [open, setOpen] = useState(null);
@@ -16,7 +16,7 @@ export default function Home() {
     api.get('/api/stats').then(setStats).catch(() => {});
   }, [version]);
 
-  if (stats && !stats.items && !collections.length) {
+  if (stats && !stats.items && !collections.length && !unsorted.item_count) {
     return (
       <div className="page">
         <Empty title="Your library is empty">
@@ -47,6 +47,17 @@ export default function Home() {
         <button className="btn btn-ghost" onClick={() => setNewColl(true)}><Icon name="plus" size={18} /> New</button>
       </div>
       <section className="shelf-grid">
+        {unsorted.item_count > 0 && (
+          <Link to="/unsorted" className="shelf-card shelf-unsorted">
+            <div className="shelf-covers">
+              {unsorted.covers.length ? unsorted.covers.map((src) => <img key={src} src={src} alt="" loading="lazy" />) : <Cover title="New" size="sm" />}
+            </div>
+            <div className="shelf-meta">
+              <strong>New &amp; Unsorted</strong>
+              <span className="muted small">{unsorted.item_count} {unsorted.item_count === 1 ? 'book' : 'books'} waiting to be sorted</span>
+            </div>
+          </Link>
+        )}
         {collections.map((c) => (
           <Link key={c.id} to={`/collections/${c.id}`} className="shelf-card">
             <div className="shelf-covers">

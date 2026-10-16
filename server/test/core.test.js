@@ -14,7 +14,8 @@ process.env.BACKUP_DIR = path.join(tmp, 'backups');
 
 const { normalizeIsbn, isbn10to13, isbn13to10 } = await import('../src/metadata/isbn.js');
 const { parseLibibCsv, rowToItem, itemsToCsv, LIBIB_COLUMNS } = await import('../src/libib.js');
-const { initDb, getDb, migrate } = await import('../src/db.js');
+const { initDb, getDb, migrate, MIGRATIONS } = await import('../src/db.js');
+const { parseTags, changeItemTags, listTags, renameTag, deleteTag } = await import('../src/tags.js');
 const { sqlDump } = await import('../src/backup.js');
 const { scoreCandidate, queriesFromLines, mergeResults } = await import('../src/metadata/index.js');
 
@@ -103,16 +104,42 @@ test('merging sources prefers retail titles and full dates', () => {
   assert.deepEqual(merged.sources, ['openlibrary', 'google']);
 });
 
-test('a backup made before logins were removed still restores', () => {
-  // Shape of a v1 dump: includes users/tokens tables.
+test('a v1 database (with logins) upgrades: logins gone, unsorted allowed, tags listed', () => {
   const old = new Database(':memory:');
-  old.exec(`CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT);
-            CREATE TABLE tokens (id INTEGER PRIMARY KEY, user_id INTEGER);
-            CREATE TABLE collections (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE COLLATE NOCASE, description TEXT, created_at TEXT);
-            INSERT INTO users VALUES (1, 'admin');
-            PRAGMA user_version = 1;`);
+  old.pragma('foreign_keys = ON');
+  old.exec(MIGRATIONS[0]);
+  old.pragma('user_version = 1');
+  old.exec(`INSERT INTO users (username, password_hash) VALUES ('admin', 'x');
+            INSERT INTO collections (name) VALUES ('American girl');
+            INSERT INTO items (collection_id, title, tags) VALUES (1, 'Meet Rebecca', 'christmas, Signed');`);
   migrate(old);
   const tables = old.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all().map((t) => t.name);
   assert.ok(!tables.includes('users') && !tables.includes('tokens'));
-  assert.ok(tables.includes('collections'));
+  assert.equal(old.prepare('SELECT title FROM items').get().title, 'Meet Rebecca');
+  // New & Unsorted: a book without a collection
+  old.prepare("INSERT INTO items (collection_id, title) VALUES (NULL, 'Loose book')").run();
+  // Deleting a collection no longer deletes books by itself
+  old.prepare('DELETE FROM collections WHERE id = 1').run();
+  assert.equal(old.prepare('SELECT COUNT(*) AS n FROM items WHERE collection_id IS NULL').get().n, 2);
+  assert.deepEqual(old.prepare('SELECT name FROM tags ORDER BY name').all().map((t) => t.name), ['christmas', 'Signed']);
+});
+
+test('tags: parse, match existing spelling, rename/merge, delete', () => {
+  const db = getDb();
+  db.prepare("INSERT INTO collections (name) VALUES ('Tag test')").run();
+  const cid = db.prepare("SELECT id FROM collections WHERE name = 'Tag test'").get().id;
+  const a = db.prepare("INSERT INTO items (collection_id, title) VALUES (?, 'A')").run(cid).lastInsertRowid;
+  const b = db.prepare("INSERT INTO items (collection_id, title) VALUES (?, 'B')").run(cid).lastInsertRowid;
+  assert.deepEqual(parseTags(' Christmas , christmas,Signed,, '), ['Christmas', 'Signed']);
+  changeItemTags([a, b], { add: ['Christmas', 'Garage sale'] });
+  changeItemTags([b], { add: ['christmas'] }); // same tag, different case
+  assert.equal(db.prepare('SELECT tags FROM items WHERE id = ?').get(b).tags, 'Christmas, Garage sale');
+  const list = listTags();
+  assert.equal(list.find((t) => t.name === 'Christmas').count, 2);
+  // rename onto an existing name merges
+  renameTag(list.find((t) => t.name === 'Garage sale').id, 'christmas');
+  assert.equal(db.prepare('SELECT tags FROM items WHERE id = ?').get(a).tags, 'Christmas');
+  assert.ok(!listTags().some((t) => t.name === 'Garage sale'));
+  deleteTag(listTags().find((t) => t.name === 'Christmas').id);
+  assert.equal(db.prepare('SELECT tags FROM items WHERE id = ?').get(a).tags, null);
 });

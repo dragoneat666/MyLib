@@ -18,6 +18,7 @@ export default function App() {
           <Route path="/" element={<Home />} />
           <Route path="/library" element={<Library />} />
           <Route path="/collections/:id" element={<Library />} />
+          <Route path="/unsorted" element={<Library unsortedView key="unsorted" />} />
           <Route path="/add" element={<AddBook />} />
           <Route path="/import" element={<ImportPage />} />
           <Route path="/export" element={<ExportPage />} />

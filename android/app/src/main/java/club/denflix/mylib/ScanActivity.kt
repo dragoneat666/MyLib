@@ -43,6 +43,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import com.google.android.material.bottomsheet.BottomSheetBehavior
 import com.google.android.material.bottomsheet.BottomSheetDialog
+import com.google.android.material.snackbar.Snackbar
 import com.google.mlkit.vision.barcode.BarcodeScanner
 import com.google.mlkit.vision.barcode.BarcodeScannerOptions
 import com.google.mlkit.vision.barcode.BarcodeScanning
@@ -105,7 +106,14 @@ class ScanActivity : AppCompatActivity() {
     private var resumeAt = 0L
     private var added = 0
     private var torchOn = false
+    // Index 0 is always "New & Unsorted" (id 0): books not in a collection yet.
     private var collections: List<LibCollection> = emptyList()
+    private var currentCollectionId = 0
+    private var allTags: List<String> = emptyList()
+    // "Tag every book I scan" — only for this scanning session.
+    private var autoTags: List<String> = emptyList()
+    private lateinit var autoTagsView: TextView
+    private lateinit var rootView: View
 
     private val selectedCollection: LibCollection?
         get() = collections.getOrNull(spinner.selectedItemPosition)
@@ -129,6 +137,9 @@ class ScanActivity : AppCompatActivity() {
         busyView = findViewById(R.id.busy)
         counter = findViewById(R.id.counter)
         spinner = findViewById(R.id.collection)
+        autoTagsView = findViewById(R.id.autoTags)
+        rootView = findViewById(android.R.id.content)
+        autoTagsView.setOnClickListener { chooseAutoTags() }
 
         findViewById<View>(R.id.close).setOnClickListener { finishWithResult() }
         findViewById<View>(R.id.shutter).setOnClickListener { if (!paused) captureCover() }
@@ -149,7 +160,9 @@ class ScanActivity : AppCompatActivity() {
             override fun handleOnBackPressed() = finishWithResult()
         })
 
-        loadCollections(intent.getIntExtra(EXTRA_COLLECTION, 0).takeIf { it > 0 } ?: prefs.lastCollection)
+        // Opened from a collection's page → that collection; otherwise New & Unsorted.
+        loadCollections(intent.getIntExtra(EXTRA_COLLECTION, 0))
+        loadTags()
 
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) startCamera()
         else permission.launch(Manifest.permission.CAMERA)
@@ -166,23 +179,25 @@ class ScanActivity : AppCompatActivity() {
     private fun loadCollections(preferId: Int) {
         lifecycleScope.launch {
             val result = withContext(Dispatchers.IO) { runCatching { api.collections() } }
-            result.onSuccess { list ->
+            result.onSuccess { fetched ->
+                val list = listOf(LibCollection(0, "New & Unsorted", 0)) + fetched
                 collections = list
                 val labels = list.map { it.name } + "+ New collection…"
                 spinner.adapter = ArrayAdapter(this@ScanActivity, android.R.layout.simple_spinner_item, labels).apply {
                     setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
                 }
                 val index = list.indexOfFirst { it.id == preferId }.takeIf { it >= 0 } ?: 0
-                spinner.setSelection(if (list.isEmpty()) labels.size - 1 else index, false)
+                currentCollectionId = list[index].id
+                spinner.setSelection(index, false)
                 (spinner.selectedView as? TextView)?.setTextColor(0xFFFFFFFF.toInt())
                 spinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
                     override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
                         (view as? TextView)?.setTextColor(0xFFFFFFFF.toInt())
-                        if (position == list.size) newCollectionDialog() else prefs.lastCollection = list[position].id
+                        // Stays on this choice until the scanner is closed.
+                        if (position == list.size) newCollectionDialog() else currentCollectionId = list[position].id
                     }
                     override fun onNothingSelected(parent: AdapterView<*>?) {}
                 }
-                if (list.isEmpty()) newCollectionDialog()
             }.onFailure { handleError(it) }
         }
     }
@@ -195,14 +210,68 @@ class ScanActivity : AppCompatActivity() {
             .setView(box)
             .setPositiveButton("Create") { _, _ ->
                 val name = input.text.toString().trim()
-                if (name.isEmpty()) return@setPositiveButton
+                if (name.isEmpty()) return@setPositiveButton loadCollections(currentCollectionId)
                 lifecycleScope.launch {
                     val r = withContext(Dispatchers.IO) { runCatching { api.createCollection(name) } }
-                    r.onSuccess { loadCollections(it) }.onFailure { handleError(it); loadCollections(prefs.lastCollection) }
+                    r.onSuccess { loadCollections(it) }.onFailure { handleError(it); loadCollections(currentCollectionId) }
                 }
             }
-            .setNegativeButton("Cancel") { _, _ -> loadCollections(prefs.lastCollection) }
+            .setNegativeButton("Cancel") { _, _ -> loadCollections(currentCollectionId) }
             .setCancelable(false)
+            .show()
+    }
+
+    // ── Tags ────────────────────────────────────────────────────────────────
+    private fun loadTags(then: (() -> Unit)? = null) {
+        lifecycleScope.launch {
+            withContext(Dispatchers.IO) { runCatching { api.tags() } }.onSuccess { allTags = it }
+            then?.invoke()
+        }
+    }
+
+    private fun showAutoTags() {
+        autoTagsView.text = if (autoTags.isEmpty()) "Tag every book I scan: off" else "Tagging every book: ${autoTags.joinToString(", ")}"
+    }
+
+    private fun chooseAutoTags() {
+        paused = true
+        loadTags {
+            TagPicker.show(this, "Tag every book I scan", allTags, autoTags,
+                message = "These tags go on every book you add until you close the scanner.",
+                saveLabel = "Use these tags",
+                onCancel = { resume() }) { chosen ->
+                autoTags = chosen
+                showAutoTags()
+                resume()
+            }
+        }
+    }
+
+    /** Pick tags for one book (after adding it, or for a replacement copy). */
+    private fun tagBook(itemId: Int, title: String, current: List<String>, heading: String, message: String? = null) {
+        paused = true
+        loadTags {
+            TagPicker.show(this, heading, allTags, current, message = message, onCancel = { resume(1200) }) { chosen ->
+                lifecycleScope.launch {
+                    val r = withContext(Dispatchers.IO) { runCatching { api.setTags(itemId, chosen) } }
+                    r.onSuccess {
+                        Toast.makeText(this@ScanActivity,
+                            if (chosen.isEmpty()) "Tags cleared on “$title”" else "Tagged “$title”: ${chosen.joinToString(", ")}",
+                            Toast.LENGTH_SHORT).show()
+                    }.onFailure { handleError(it) }
+                    resume(1200)
+                }
+            }
+        }
+    }
+
+    /** "Added …" message with an Add tag button; scanning carries on meanwhile. */
+    private fun announce(message: String, item: JSONObject) {
+        Snackbar.make(rootView, message, 10_000)
+            .setAnchorView(R.id.status)
+            .setAction("Add tag") {
+                tagBook(item.getInt("id"), item.optString("title"), parseTags(item.optString("tags")), "Tags for “${item.optString("title")}”")
+            }
             .show()
     }
 
@@ -392,15 +461,28 @@ class ScanActivity : AppCompatActivity() {
         val dialog = BottomSheetDialog(this)
         val root = sheetRoot("Couldn't find ISBN $isbn online")
         val owned = body?.optJSONArray("owned").toList()
-        root.addView(TextView(this).apply {
-            text = if (owned.isNotEmpty()) "You already have it: " + owned.joinToString { it.optString("title") + " in " + it.optString("collection_name") }
-            else "You can photograph the cover instead, or type the details in."
-            setPadding(0, 8, 0, 16)
-        })
-        root.addView(button("Photograph the cover") { dialog.dismiss(); captureCover() })
-        root.addView(button("Type it in", outlined = true) { dialog.dismiss(); openWebAdd(isbn) })
+        var handled = false
+        if (owned.isNotEmpty()) {
+            // Not online, but it's already in MyLib: same three choices as any duplicate.
+            val book = owned.first()
+            root.addView(TextView(this).apply {
+                text = "✓ Already in MyLib: “${book.optString("title")}” in ${book.optString("collection_name")}"
+                setTextColor(ContextCompat.getColor(this@ScanActivity, R.color.success))
+                setPadding(0, 8, 0, 8)
+            })
+            root.addView(button("Replacement copy — retag it", outlined = true) { handled = true; dialog.dismiss(); replaceCopy(owned) })
+            root.addView(button("Add 2nd copy") { handled = true; dialog.dismiss(); addCopy(owned) })
+            root.addView(button("Ignore", outlined = true) { dialog.dismiss() })
+        } else {
+            root.addView(TextView(this).apply {
+                text = "You can photograph the cover instead, or type the details in."
+                setPadding(0, 8, 0, 16)
+            })
+            root.addView(button("Photograph the cover") { handled = true; dialog.dismiss(); captureCover() })
+            root.addView(button("Type it in", outlined = true) { handled = true; dialog.dismiss(); openWebAdd(isbn) })
+        }
         dialog.setContentView(root.parent as View)
-        dialog.setOnCancelListener { resume(1500) }
+        dialog.setOnDismissListener { if (!handled) resume(1500) }
         dialog.show()
     }
 
@@ -419,12 +501,14 @@ class ScanActivity : AppCompatActivity() {
             for (book in items) list.addView(resultRow(book) { action ->
                 handled = true
                 dialog.dismiss()
+                val owned = book.optJSONArray("owned").toList()
                 when (action) {
                     "add" -> addBook(book, if (photo != null && usePhoto.isChecked) photo else null)
+                    "copy" -> addCopy(owned)
+                    "replace" -> replaceCopy(owned)
                     else -> {
-                        // Prefer the copy in the collection she's adding to.
-                        val owned = book.optJSONArray("owned").toList()
-                        addCopy(owned.firstOrNull { it.optInt("collection_id") == selectedCollection?.id } ?: owned.first())
+                        Toast.makeText(this, "Ignored", Toast.LENGTH_SHORT).show()
+                        resume(1500)
                     }
                 }
             })
@@ -501,10 +585,16 @@ class ScanActivity : AppCompatActivity() {
                 visibility = View.VISIBLE
                 text = "✓ Already in " + owned.joinToString { o -> o.optString("collection_name") + (if (o.optInt("copies") > 1) " (×${o.optInt("copies")})" else "") }
             }
-            row.findViewById<View>(R.id.copy).apply { visibility = View.VISIBLE; setOnClickListener { onAction("copy") } }
-            row.findViewById<Button>(R.id.add).text = "Add again"
+            row.findViewById<View>(R.id.ownedActions).visibility = View.VISIBLE
+            row.findViewById<View>(R.id.newActions).visibility = View.GONE
+            row.findViewById<View>(R.id.replace).setOnClickListener { onAction("replace") }
+            row.findViewById<View>(R.id.copy).setOnClickListener { onAction("copy") }
+            row.findViewById<View>(R.id.ignore).setOnClickListener { onAction("ignore") }
         }
-        row.findViewById<View>(R.id.add).setOnClickListener { onAction("add") }
+        row.findViewById<Button>(R.id.add).apply {
+            text = "Add to ${selectedCollection?.name ?: "New & Unsorted"}"
+            setOnClickListener { onAction("add") }
+        }
         val cover = row.findViewById<ImageView>(R.id.cover)
         book.optString("cover_url").takeIf { it.isNotBlank() && it != "null" }?.let { url ->
             lifecycleScope.launch {
@@ -516,39 +606,49 @@ class ScanActivity : AppCompatActivity() {
     }
 
     private fun addBook(book: JSONObject, photo: ByteArray?) {
-        val target = selectedCollection
-        if (target == null) {
-            Toast.makeText(this, "Choose a collection first", Toast.LENGTH_SHORT).show()
-            resume(); return
-        }
+        val target = selectedCollection ?: LibCollection(0, "New & Unsorted", 0)
+        val tags = autoTags
         setBusy(true, "Adding…")
         lifecycleScope.launch {
             val r = withContext(Dispatchers.IO) {
                 runCatching {
-                    val item = api.addItem(target.id, book)
+                    val item = api.addItem(target.id, book, tags)
                     if (photo != null) api.uploadCover(item.getInt("id"), photo) else item
                 }
             }
             r.onSuccess {
                 added++
                 counter.text = "$added added"
-                prefs.lastCollection = target.id
-                Toast.makeText(this@ScanActivity, "Added “${it.optString("title")}” to ${target.name}", Toast.LENGTH_SHORT).show()
+                announce("Added “${it.optString("title")}” to ${target.name}", it)
             }.onFailure { handleError(it) }
             resume(1200)
         }
     }
 
-    private fun addCopy(owned: JSONObject) {
+    /** The copy we already have — preferring the one in the collection she's adding to. */
+    private fun pickOwned(owned: List<JSONObject>): JSONObject =
+        owned.firstOrNull { it.optInt("collection_id") == (selectedCollection?.id ?: 0) } ?: owned.first()
+
+    private fun addCopy(owned: List<JSONObject>) {
+        val book = pickOwned(owned)
         lifecycleScope.launch {
-            val r = withContext(Dispatchers.IO) { runCatching { api.addCopy(owned.getInt("id")) } }
+            val r = withContext(Dispatchers.IO) { runCatching { api.addCopy(book.getInt("id"), autoTags) } }
             r.onSuccess {
                 added++
                 counter.text = "$added added"
-                Toast.makeText(this@ScanActivity, "${it.optString("title")}: now ${it.optInt("copies")} copies", Toast.LENGTH_SHORT).show()
+                announce("“${it.optString("title")}”: now ${it.optInt("copies")} copies", it)
             }.onFailure { handleError(it) }
             resume(1200)
         }
+    }
+
+    /** "Replacement copy — retag it": the copy count stays the same; just pick its tags. */
+    private fun replaceCopy(owned: List<JSONObject>) {
+        val book = pickOwned(owned)
+        val current = (parseTags(book.optString("tags")) + autoTags).distinctBy { it.lowercase() }
+        tagBook(book.getInt("id"), book.optString("title"), current,
+            heading = "Replacement copy — retag it",
+            message = "“${book.optString("title")}” keeps its copy count. Pick the tags this copy should have.")
     }
 
     private fun openWebAdd(isbn: String?) {
