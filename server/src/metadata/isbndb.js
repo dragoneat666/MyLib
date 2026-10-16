@@ -31,12 +31,12 @@ const headers = () => ({ Authorization: config.isbndbKey });
 
 export async function lookupIsbn(isbn) {
   if (!enabled()) return null;
-  const data = await fetchJson(`${BASE}/book/${isbn}`, { headers: headers() });
+  const data = await fetchJson(`${BASE}/book/${isbn}`, { headers: headers(), source: 'isbndb' });
   return data?.book ? toResult(data.book) : null;
 }
 
 export async function search(q, limit = 10) {
   if (!enabled()) return [];
-  const data = await fetchJson(`${BASE}/books/${encodeURIComponent(q)}?page=1&pageSize=${limit}`, { headers: headers() });
+  const data = await fetchJson(`${BASE}/books/${encodeURIComponent(q)}?page=1&pageSize=${limit}`, { headers: headers(), source: 'isbndb' });
   return (data?.books || []).map(toResult);
 }

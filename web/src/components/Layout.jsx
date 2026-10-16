@@ -134,6 +134,7 @@ export default function Layout({ children }) {
           <NavLink to="/import" className="nav-item"><Icon name="upload" /> Import</NavLink>
           <NavLink to="/export" className="nav-item"><Icon name="download" /> Export</NavLink>
           <NavLink to="/backups" className="nav-item"><Icon name="backup" /> Backups</NavLink>
+          <NavLink to="/sources" className="nav-item"><Icon name="search" /> Book sources</NavLink>
           <NavLink to="/settings" className="nav-item"><Icon name="settings" /> Settings</NavLink>
         </div>
       </nav>

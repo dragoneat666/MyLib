@@ -37,7 +37,7 @@ function toResult(item) {
 
 async function query(q, max) {
   const url = `${BASE}?q=${encodeURIComponent(q)}&maxResults=${max}&printType=books&key=${encodeURIComponent(config.googleBooksKey)}`;
-  const data = await fetchJson(url);
+  const data = await fetchJson(url, { source: 'google' });
   return (data?.items || []).map(toResult);
 }
 

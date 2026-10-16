@@ -1,4 +1,4 @@
-// Settings.jsx — Android app, book information sources (with Test buttons).
+// Settings.jsx — book sources link, tags, Android app.
 
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
@@ -6,19 +6,10 @@ import { api, androidBridge } from '../api.js';
 import { useApp } from '../context.jsx';
 import { Icon } from '../components/ui.jsx';
 
-const SOURCE_HELP = {
-  openlibrary: 'Free and always on. Covers, series and most ISBNs.',
-  google: 'Free key, 1,000 lookups a day. Better titles and descriptions.',
-  isbndb: 'Paid. The most complete retail data.',
-  ai: 'Reads cover photos from the phone to identify books.',
-};
-
 export default function Settings() {
   const [info, setInfo] = useState(null);
-  const [providers, setProviders] = useState([]);
   useEffect(() => {
     api.get('/api/info').then(setInfo).catch(() => {});
-    api.get('/api/lookup/providers').then((d) => setProviders(d.providers)).catch(() => {});
   }, []);
 
   return (
@@ -26,14 +17,9 @@ export default function Settings() {
       <h1>Settings</h1>
 
       <section className="card stack">
-        <h2>Book information sources</h2>
-        <p className="muted small">
-          Keys are set in the <code>.env</code> file next to <code>docker-compose.yml</code>; restart the container after changing them.
-          <b> Test</b> looks up a sample book (Dinosaurs Before Dark) to check the source works.
-        </p>
-        <ul className="source-list">
-          {providers.map((p) => <SourceRow key={p.id} source={p} />)}
-        </ul>
+        <h2>Book sources</h2>
+        <p className="muted small">Which services MyLib asks for book details, in what order, how many calls they've used today, and a Test button for each.</p>
+        <Link className="btn" to="/sources"><Icon name="books" size={18} /> Open Book sources</Link>
       </section>
 
       <TagsSection />
@@ -63,45 +49,6 @@ export default function Settings() {
 
       <p className="muted small center">MyLib {info?.version}</p>
     </div>
-  );
-}
-
-function SourceRow({ source }) {
-  const [result, setResult] = useState(null);
-  const [testing, setTesting] = useState(false);
-
-  const test = async () => {
-    setTesting(true);
-    setResult(null);
-    try {
-      setResult(await api.post(`/api/lookup/providers/${source.id}/test`));
-    } catch (err) {
-      setResult({ ok: false, message: err.message });
-    }
-    setTesting(false);
-  };
-
-  return (
-    <li className="source">
-      <div className="source-head">
-        <span className={`dot ${source.enabled ? 'on' : ''}`} aria-hidden="true" />
-        <div className="source-name">
-          <b>{source.name}</b>
-          <span className="muted small">
-            {source.env ? (source.enabled ? <>Key <code>{source.key}</code></> : <>Off — set <code>{source.env}</code></>) : 'No key needed'}
-          </span>
-        </div>
-        <button className="btn btn-small" onClick={test} disabled={testing || !source.enabled}>
-          {testing ? 'Testing…' : 'Test'}
-        </button>
-      </div>
-      <p className="muted small source-help">{SOURCE_HELP[source.id]}</p>
-      {result && (
-        <p className={`test-result ${result.ok ? 'ok' : 'fail'}`} role="status">
-          {result.ok ? '✓' : '✗'} {result.message}{result.ms != null ? ` (${(result.ms / 1000).toFixed(1)} s)` : ''}
-        </p>
-      )}
-    </li>
   );
 }
 

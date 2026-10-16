@@ -19,7 +19,7 @@ function firstIsbns(list = []) {
 
 export async function lookupIsbn(isbn) {
   const key = `ISBN:${isbn}`;
-  const data = await fetchJson(`${BASE}/api/books?bibkeys=${key}&format=json&jscmd=details`);
+  const data = await fetchJson(`${BASE}/api/books?bibkeys=${key}&format=json&jscmd=details`, { source: 'openlibrary' });
   const d = data?.[key]?.details;
   if (!d) return null;
 
@@ -30,12 +30,12 @@ export async function lookupIsbn(isbn) {
   const workKey = d.works?.[0]?.key;
   if (workKey && (!description || !authors.length)) {
     try {
-      const work = await fetchJson(`${BASE}${workKey}.json`);
+      const work = await fetchJson(`${BASE}${workKey}.json`, { source: 'openlibrary' });
       description = description || text(work?.description);
       if (!authors.length && work?.authors?.length) {
         const names = await Promise.all(
           work.authors.slice(0, 3).map((a) =>
-            fetchJson(`${BASE}${a.author?.key}.json`).then((x) => x?.name).catch(() => null)
+            fetchJson(`${BASE}${a.author?.key}.json`, { source: 'openlibrary' }).then((x) => x?.name).catch(() => null)
           )
         );
         authors = names.filter(Boolean);
@@ -70,7 +70,7 @@ export async function search(query, limit = 10) {
     'editions.publish_date', 'editions.cover_i',
   ].join(',');
   const url = `${BASE}/search.json?q=${encodeURIComponent(query)}&limit=${limit}&fields=${fields}`;
-  const data = await fetchJson(url, { timeout: 15000 });
+  const data = await fetchJson(url, { timeout: 15000, source: 'openlibrary' });
   return (data?.docs || []).map((doc) => {
     const ed = doc.editions?.docs?.[0] || {};
     const ids = firstIsbns(ed.isbn);

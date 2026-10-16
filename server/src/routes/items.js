@@ -6,9 +6,11 @@ import { getDb } from '../db.js';
 import {
   present, getItem, resolveCollection, fieldsFromMetadata, sanitizeFields, insertItem, updateItem, findOwned,
 } from '../items.js';
-import { changeItemTags, parseTags } from '../tags.js';
+import { changeItemTags, parseTags, normalizeTagField } from '../tags.js';
+
+const NYT_TAG = 'NYT Bestseller';
 import { fetchCoverForItem, saveCover, deleteCover, queueCovers } from '../covers.js';
-import { lookupIsbn } from '../metadata/index.js';
+import { lookupIsbn, nytTagOn } from '../metadata/index.js';
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 15 * 1024 * 1024 } });
@@ -101,6 +103,8 @@ router.post('/', async (req, res) => {
   for (const [k, v] of Object.entries(sanitizeFields(body))) if (v != null) fields[k] = v;
   for (const k of Object.keys(fields)) if (fields[k] == null) delete fields[k];
   if (!fields.title) return res.status(400).json({ error: 'Title is required' });
+
+  if (body.metadata?.nyt && nytTagOn()) fields.tags = normalizeTagField([...parseTags(fields.tags), NYT_TAG]);
 
   const id = insertItem(collectionId, fields);
   const item = getItem(id);
@@ -198,6 +202,7 @@ router.post('/:id/refresh', async (req, res) => {
     if (overwrite || item[k] == null || item[k] === '') changes[k] = v;
   }
   updateItem(item.id, changes);
+  if (meta.nyt && nytTagOn()) changeItemTags([item.id], { add: [NYT_TAG] });
   const updated = getItem(item.id);
   if (!updated.cover_file) await fetchCoverForItem(updated).catch(() => null);
   res.json({ item: present(getItem(item.id)), changed: Object.keys(changes) });

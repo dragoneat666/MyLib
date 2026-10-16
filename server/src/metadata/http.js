@@ -1,19 +1,28 @@
 // http.js — small fetch wrapper with a timeout and our User-Agent
 // (Open Library asks API users to identify themselves).
+//
+// Pass `source` to count the call against that source's limits (usage.js):
+// over a limit, LimitReached is thrown and no request is made.
 
 import { config } from '../config.js';
+import { beforeCall, rateLimited } from './usage.js';
 
-export async function fetchJson(url, { headers = {}, timeout = 12000 } = {}) {
+export async function fetchJson(url, { headers = {}, timeout = 12000, source = null, method = 'GET', body } = {}) {
+  if (source) beforeCall(source);
   const res = await fetch(url, {
+    method,
     headers: { 'User-Agent': config.userAgent, Accept: 'application/json', ...headers },
+    body,
     signal: AbortSignal.timeout(timeout),
     redirect: 'follow',
   });
   if (res.status === 404) return null;
   if (!res.ok) {
+    if (res.status === 429 && source) rateLimited(source);
     // Pass on the service's own explanation (e.g. Google's "API key not valid").
-    const body = await res.json().catch(() => null);
-    const detail = body?.error?.message || body?.message || body?.errorMessage || '';
+    const data = await res.json().catch(() => null);
+    const detail = data?.error?.message || data?.error_description || data?.message || data?.errorMessage
+      || (typeof data?.error === 'string' ? data.error : '') || data?.fault?.faultstring || '';
     const err = new Error(`${new URL(url).hostname} responded ${res.status}${detail ? `: ${detail}` : ''}`);
     err.status = res.status;
     throw err;

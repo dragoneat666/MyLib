@@ -1,35 +1,92 @@
-// metadata/index.js — combines every configured book data source.
+// metadata/index.js — finds book details from the configured sources.
 //
-//   Open Library  — always on, free, no key
-//   Google Books  — when GOOGLE_BOOKS_API_KEY is set (free key)
-//   ISBNdb        — when ISBNDB_API_KEY is set (paid)
-//   Claude        — when ANTHROPIC_API_KEY is set, used to read cover photos
+// Book-detail sources are asked ONE AT A TIME in the order chosen in
+// Settings (default: Open Library, Hardcover, Google Books, ISBNdb), stopping
+// as soon as the book has a title, author, cover and description. Each source
+// counts its calls and stops at its daily limit (usage.js).
+//
+// Extras (not in the order):
+//   NYT Books — marks books that were NYT bestsellers (NYT_API_KEY)
+//   Claude    — reads cover photos (ANTHROPIC_API_KEY)
 
 import * as openlibrary from './openlibrary.js';
+import * as hardcover from './hardcover.js';
 import * as google from './googlebooks.js';
 import * as isbndb from './isbndb.js';
+import * as nyt from './nyt.js';
 import * as ai from './ai.js';
 import { normalizeIsbn } from './isbn.js';
+import { usageSummary } from './usage.js';
 import { config } from '../config.js';
+import { getSetting, setSetting } from '../db.js';
+
+export const SOURCES = [
+  { id: 'openlibrary', name: 'Open Library', module: openlibrary, env: null, key: () => null },
+  { id: 'hardcover', name: 'Hardcover', module: hardcover, env: 'HARDCOVER_API_TOKEN', key: () => config.hardcoverToken },
+  { id: 'google', name: 'Google Books', module: google, env: 'GOOGLE_BOOKS_API_KEY', key: () => config.googleBooksKey },
+  { id: 'isbndb', name: 'ISBNdb', module: isbndb, env: 'ISBNDB_API_KEY', key: () => config.isbndbKey },
+];
+const DEFAULT_ORDER = SOURCES.map((s) => s.id);
+const configured = (s) => !s.env || !!s.key();
+
+const readJson = (key, fallback) => {
+  try {
+    return JSON.parse(getSetting(key, '')) ?? fallback;
+  } catch {
+    return fallback;
+  }
+};
+
+// The saved order, with any sources it doesn't mention added at the end.
+export function sourceOrder() {
+  const saved = readJson('source_order', []).filter((id) => DEFAULT_ORDER.includes(id));
+  return [...new Set([...saved, ...DEFAULT_ORDER])];
+}
+const sourcesOff = () => new Set(readJson('sources_off', []));
+const nytOn = () => nyt.enabled() && !sourcesOff().has('nyt');
+export const nytTagOn = () => getSetting('nyt_tag', '1') === '1';
+
+// Sources that will actually be asked, in order.
+export function activeSources() {
+  const off = sourcesOff();
+  return sourceOrder().map((id) => SOURCES.find((s) => s.id === id)).filter((s) => configured(s) && !off.has(s.id));
+}
+
+export function saveSourceSettings({ order, off, nyt_tag }) {
+  if (Array.isArray(order)) setSetting('source_order', JSON.stringify(order.filter((id) => DEFAULT_ORDER.includes(id))));
+  if (Array.isArray(off)) setSetting('sources_off', JSON.stringify(off.filter((id) => [...DEFAULT_ORDER, 'nyt', 'ai'].includes(id))));
+  if (nyt_tag != null) setSetting('nyt_tag', nyt_tag ? '1' : '0');
+}
 
 export function providers() {
   return {
     openlibrary: true,
+    hardcover: hardcover.enabled(),
     google: google.enabled(),
     isbndb: isbndb.enabled(),
+    nyt: nyt.enabled(),
     ai: ai.enabled(),
   };
 }
 
 // "AIzaSyB…x9Qw" — enough to tell which key is loaded without showing it.
-const mask = (key) => (key ? `${key.slice(0, 6)}…${key.slice(-4)}` : null);
+const mask = (key) => (key ? `${key.replace(/^bearer\s+/i, '').slice(0, 6)}…${key.slice(-4)}` : null);
 
 export function providerDetails() {
+  const off = sourcesOff();
+  const metadata = sourceOrder().map((id) => {
+    const s = SOURCES.find((x) => x.id === id);
+    return {
+      id, name: s.name, kind: 'metadata', enabled: configured(s), on: !off.has(id),
+      key: mask(s.key()), env: s.env, usage: usageSummary(id),
+    };
+  });
   return [
-    { id: 'openlibrary', name: 'Open Library', enabled: true, key: null, env: null },
-    { id: 'google', name: 'Google Books', enabled: google.enabled(), key: mask(config.googleBooksKey), env: 'GOOGLE_BOOKS_API_KEY' },
-    { id: 'isbndb', name: 'ISBNdb', enabled: isbndb.enabled(), key: mask(config.isbndbKey), env: 'ISBNDB_API_KEY' },
-    { id: 'ai', name: 'Claude cover reading', enabled: ai.enabled(), key: mask(config.anthropicKey), env: 'ANTHROPIC_API_KEY' },
+    ...metadata,
+    { id: 'nyt', name: 'NYT Books (bestsellers)', kind: 'extra', enabled: nyt.enabled(), on: !off.has('nyt'),
+      key: mask(config.nytKey), env: 'NYT_API_KEY', usage: usageSummary('nyt'), tag: nytTagOn() },
+    { id: 'ai', name: 'Claude cover reading', kind: 'extra', enabled: ai.enabled(), on: !off.has('ai'),
+      key: mask(config.anthropicKey), env: 'ANTHROPIC_API_KEY' },
   ];
 }
 
@@ -38,7 +95,6 @@ export const TEST_ISBN = '9780679824114';
 
 // Make one real request to a source and report what happened.
 export async function testProvider(id) {
-  const lookups = { openlibrary: openlibrary.lookupIsbn, google: google.lookupIsbn, isbndb: isbndb.lookupIsbn };
   const details = providerDetails().find((p) => p.id === id);
   if (!details) return { ok: false, message: 'Unknown source' };
   if (!details.enabled) return { ok: false, message: `No key set. Add ${details.env} to the .env file and restart the container.` };
@@ -48,7 +104,13 @@ export async function testProvider(id) {
       const model = await ai.checkKey();
       return { ok: true, message: `Key works — ${model} is available.`, ms: Date.now() - started };
     }
-    const book = await lookups[id](TEST_ISBN);
+    if (id === 'nyt') {
+      const info = await nyt.check();
+      const ms = Date.now() - started;
+      if (!info) return { ok: true, message: 'Key works (the test book had no bestseller history).', ms };
+      return { ok: true, message: `Works — “Where the Crawdads Sing” was on the ${info.lists[0].name} list for ${info.weeks} weeks.`, ms };
+    }
+    const book = await SOURCES.find((s) => s.id === id).module.lookupIsbn(TEST_ISBN);
     const ms = Date.now() - started;
     if (!book?.title) return { ok: false, message: `Connected, but the test book (ISBN ${TEST_ISBN}) wasn't found.`, ms };
     const by = book.authors?.length ? ` by ${book.authors.join(', ')}` : '';
@@ -62,7 +124,8 @@ const settle = async (promise, label) => {
   try {
     return await promise;
   } catch (err) {
-    console.warn(`metadata: ${label} failed — ${err.message}`);
+    if (err.limitReached) console.log(`metadata: skipped ${label} — ${err.message}`);
+    else console.warn(`metadata: ${label} failed — ${err.message}`);
     return null;
   }
 };
@@ -70,58 +133,64 @@ const settle = async (promise, label) => {
 const fullDate = (d) => /^\d{4}-\d{2}-\d{2}$/.test(d || '');
 const firstWith = (list, pick) => list.map(pick).find((v) => v != null && v !== '' && !(Array.isArray(v) && !v.length));
 
-// Open Library titles are often lower-case library-catalogue style
-// ("Lanie's real adventures"); prefer a retail source's capitalisation.
-function niceTitle(results) {
-  const preferred = results.find((r) => r.source !== 'openlibrary' && r.title);
-  return preferred?.title || results.find((r) => r.title)?.title || null;
-}
-
+// Results arrive in the chosen order; for each field the first source that has it wins.
 export function mergeResults(results) {
   const list = results.filter(Boolean);
   if (!list.length) return null;
-  // Retail sources have better descriptions/publishers; Open Library has better covers and series.
-  const byRetail = [...list].sort((a, b) => rank(a.source) - rank(b.source));
-  const byCover = [...list].sort((a, b) => coverRank(a.source) - coverRank(b.source));
+  let title = firstWith(list, (r) => r.title) || null;
+  // Open Library titles are often lower-case catalogue style ("Lanie's real
+  // adventures"); if another source has the same title, use its capitalisation.
+  const better = title && list.find((r) => r.source !== 'openlibrary' && r.title?.toLowerCase() === title.toLowerCase());
+  if (better) title = better.title;
   const dates = list.map((r) => r.publish_date).filter(Boolean);
   return {
-    title: niceTitle(byRetail),
-    subtitle: firstWith(byRetail, (r) => r.subtitle),
-    authors: firstWith(byRetail, (r) => r.authors) || [],
-    publisher: firstWith(byRetail, (r) => r.publisher),
+    title,
+    subtitle: firstWith(list, (r) => r.subtitle),
+    authors: firstWith(list, (r) => r.authors) || [],
+    publisher: firstWith(list, (r) => r.publisher),
     publish_date: dates.find(fullDate) || dates[0] || null,
-    description: firstWith(byRetail, (r) => r.description),
-    pages: firstWith(byRetail, (r) => r.pages),
+    description: firstWith(list, (r) => r.description),
+    pages: firstWith(list, (r) => r.pages),
     isbn13: firstWith(list, (r) => r.isbn13),
     isbn10: firstWith(list, (r) => r.isbn10),
-    cover_url: firstWith(byCover, (r) => r.cover_url),
+    cover_url: firstWith(list, (r) => r.cover_url),
     series: firstWith(list, (r) => r.series),
+    volume: firstWith(list, (r) => r.volume),
     sources: [...new Set(list.map((r) => r.source))],
   };
 }
-const rank = (s) => ({ google: 0, isbndb: 1, openlibrary: 2 })[s] ?? 3;
-const coverRank = (s) => ({ openlibrary: 0, google: 1, isbndb: 2 })[s] ?? 3;
 
-export async function lookupIsbn(raw) {
+// Good enough to stop asking more sources.
+export const isComplete = (m) => !!(m?.title && m.authors?.length && m.cover_url && m.description);
+
+export async function lookupIsbn(raw, { withNyt = true } = {}) {
   const ids = normalizeIsbn(raw);
   if (!ids) return null;
-  const isbn = ids.isbn13;
-  const results = await Promise.all([
-    settle(openlibrary.lookupIsbn(isbn), 'openlibrary'),
-    settle(google.lookupIsbn(isbn), 'google'),
-    settle(isbndb.lookupIsbn(isbn), 'isbndb'),
-  ]);
-  // Some old books are only indexed by their ISBN-10.
-  if (!results.some(Boolean) && ids.isbn10) {
-    results.push(await settle(openlibrary.lookupIsbn(ids.isbn10), 'openlibrary-10'));
+  const results = [];
+  let merged = null;
+  for (const source of activeSources()) {
+    let r = await settle(source.module.lookupIsbn(ids.isbn13), source.id);
+    // Some old books are only indexed by their ISBN-10 on Open Library.
+    if (!r && source.id === 'openlibrary' && ids.isbn10) r = await settle(openlibrary.lookupIsbn(ids.isbn10), 'openlibrary');
+    if (!r) continue;
+    results.push(r);
+    merged = mergeResults(results);
+    if (isComplete(merged)) break;
   }
-  const merged = mergeResults(results);
   if (!merged) return null;
   // The scanned ISBN always wins over whatever a source listed first.
-  return { ...merged, isbn13: ids.isbn13, isbn10: ids.isbn10 || merged.isbn10 };
+  const book = { ...merged, isbn13: ids.isbn13, isbn10: ids.isbn10 || merged.isbn10 };
+  if (withNyt && nytOn()) {
+    const info = await settle(nyt.bestseller(ids.isbn13), 'nyt');
+    if (info) {
+      book.nyt = { weeks: info.weeks, best_rank: info.best_rank, lists: info.lists, review_url: info.review_url };
+      book.description = book.description || info.description;
+    }
+  }
+  return book;
 }
 
-// Free-text search across sources, de-duplicated by ISBN.
+// Free-text search: sources in order until there are enough results.
 export async function search(query, limit = 15) {
   const q = String(query || '').trim();
   if (!q) return [];
@@ -129,24 +198,18 @@ export async function search(query, limit = 15) {
     const hit = await lookupIsbn(q);
     return hit ? [hit] : [];
   }
-  const lists = await Promise.all([
-    settle(google.search(q, 10), 'google'),
-    settle(isbndb.search(q, 10), 'isbndb'),
-    settle(openlibrary.search(q, 10), 'openlibrary'),
-  ]);
   const out = [];
   const seen = new Set();
-  // Interleave so each source's best match is near the top.
-  const max = Math.max(...lists.map((l) => l?.length || 0));
-  for (let i = 0; i < max; i++) {
-    for (const list of lists) {
-      const r = list?.[i];
-      if (!r || !r.title) continue;
+  for (const source of activeSources()) {
+    const list = (await settle(source.module.search(q, 10), source.id)) || [];
+    for (const r of list) {
+      if (!r?.title) continue;
       const key = r.isbn13 || `${r.title.toLowerCase()}|${(r.authors[0] || '').toLowerCase()}`;
       if (seen.has(key)) continue;
       seen.add(key);
       out.push({ ...r, sources: [r.source] });
     }
+    if (out.length >= 8) break;
   }
   return out.slice(0, limit);
 }

@@ -8,6 +8,7 @@ import ImportPage from './pages/Import.jsx';
 import ExportPage from './pages/Export.jsx';
 import Backups from './pages/Backups.jsx';
 import Settings from './pages/Settings.jsx';
+import Sources from './pages/Sources.jsx';
 
 // No logins: MyLib is only reachable on the home network / NetBird.
 export default function App() {
@@ -24,6 +25,7 @@ export default function App() {
           <Route path="/export" element={<ExportPage />} />
           <Route path="/backups" element={<Backups />} />
           <Route path="/settings" element={<Settings />} />
+          <Route path="/sources" element={<Sources />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </Layout>

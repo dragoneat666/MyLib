@@ -72,6 +72,7 @@ export function fieldsFromMetadata(meta = {}) {
     publish_date: meta.publish_date || null,
     length: meta.pages ? String(meta.pages) : null,
     series: meta.series || null,
+    volume: meta.volume || null,
     cover_url: meta.cover_url || null,
   };
 }

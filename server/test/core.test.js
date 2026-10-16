@@ -143,3 +143,26 @@ test('tags: parse, match existing spelling, rename/merge, delete', () => {
   deleteTag(listTags().find((t) => t.name === 'Christmas').id);
   assert.equal(db.prepare('SELECT tags FROM items WHERE id = ?').get(a).tags, null);
 });
+
+test('sources: first in the chosen order wins each field; complete stops the lookup', async () => {
+  const { mergeResults, isComplete } = await import('../src/metadata/index.js');
+  const hc = { source: 'hardcover', title: 'Dinosaurs Before Dark', authors: ['Mary Pope Osborne'], series: 'Magic Tree House', volume: '1', cover_url: 'hc.jpg' };
+  const ol = { source: 'openlibrary', title: 'Dinosaurs before dark', authors: ['M. P. Osborne'], description: 'From OL', cover_url: 'ol.jpg' };
+  const m = mergeResults([hc, ol]);
+  assert.equal(m.cover_url, 'hc.jpg');
+  assert.deepEqual(m.authors, ['Mary Pope Osborne']);
+  assert.equal(m.description, 'From OL', 'later sources fill gaps');
+  assert.equal(m.volume, '1');
+  assert.equal(isComplete(mergeResults([hc])), false, 'no description yet');
+  assert.equal(isComplete(m), true);
+});
+
+test('daily limits stop calls before they happen', async () => {
+  const { config } = await import('../src/config.js');
+  const { beforeCall, usageSummary, LimitReached } = await import('../src/metadata/usage.js');
+  config.dailyLimits.testsource = 2;
+  beforeCall('testsource');
+  beforeCall('testsource');
+  assert.throws(() => beforeCall('testsource'), LimitReached);
+  assert.deepEqual(usageSummary('testsource'), { used: 2, limit: 2, paused: false });
+});

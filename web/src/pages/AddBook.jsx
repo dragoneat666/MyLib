@@ -157,6 +157,9 @@ export default function AddBook() {
                   <span className="muted small">
                     {[r.publisher, r.publish_date, r.pages && `${r.pages} pages`, r.isbn13].filter(Boolean).join(' · ')}
                   </span>
+                  {r.nyt && (
+                    <span className="chip chip-nyt">★ NYT Bestseller · {r.nyt.weeks} {r.nyt.weeks === 1 ? 'week' : 'weeks'} on the list</span>
+                  )}
                   {owned.length > 0 && !state && (
                     <DuplicateChoice owned={owned} onReplace={() => replaceCopy(owned[0], key)}
                       onCopy={() => addCopy(owned[0], key)} onIgnore={() => ignore(key)} />

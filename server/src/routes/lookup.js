@@ -2,7 +2,7 @@
 
 import { Router } from 'express';
 import multer from 'multer';
-import { lookupIsbn, search, identifyCover, providerDetails, testProvider } from '../metadata/index.js';
+import { lookupIsbn, search, identifyCover, providerDetails, testProvider, saveSourceSettings } from '../metadata/index.js';
 import { normalizeIsbn } from '../metadata/isbn.js';
 import { findOwned } from '../items.js';
 
@@ -12,6 +12,12 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 12 
 const withOwned = (r) => ({ ...r, owned: r.isbn13 || r.isbn10 ? findOwned(r.isbn13 || r.isbn10) : [] });
 
 router.get('/providers', (_req, res) => res.json({ providers: providerDetails() }));
+
+// PUT /api/lookup/providers { order: ['openlibrary', 'hardcover', …], off: ['google'], nyt_tag: true }
+router.put('/providers', (req, res) => {
+  saveSourceSettings(req.body || {});
+  res.json({ providers: providerDetails() });
+});
 
 // POST /api/lookup/providers/:id/test — "Test" button in Settings
 router.post('/providers/:id/test', async (req, res) => {

@@ -577,8 +577,10 @@ class ScanActivity : AppCompatActivity() {
         row.findViewById<TextView>(R.id.title).text = listOf(book.optString("title"), book.optString("subtitle")).filter { it.isNotBlank() && it != "null" }.joinToString(": ")
         val authors = book.optJSONArray("authors")
         row.findViewById<TextView>(R.id.author).text = (0 until (authors?.length() ?: 0)).joinToString { authors!!.getString(it) }
-        row.findViewById<TextView>(R.id.meta).text = listOf("publisher", "publish_date", "isbn13")
-            .mapNotNull { k -> book.optString(k).takeIf { it.isNotBlank() && it != "null" } }.joinToString(" · ")
+        val nyt = book.optJSONObject("nyt")
+        row.findViewById<TextView>(R.id.meta).text = (listOf("publisher", "publish_date", "isbn13")
+            .mapNotNull { k -> book.optString(k).takeIf { it.isNotBlank() && it != "null" } } +
+            listOfNotNull(nyt?.let { "★ NYT Bestseller (${it.optInt("weeks")} weeks)" })).joinToString(" · ")
         val owned = book.optJSONArray("owned").toList()
         if (owned.isNotEmpty()) {
             row.findViewById<TextView>(R.id.owned).apply {

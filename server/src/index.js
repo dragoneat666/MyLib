@@ -13,7 +13,7 @@ import { importRouter, exportRouter, backupRouter } from './routes/transfer.js';
 import tagsRouter from './routes/tags.js';
 import { UNSORTED_NAME } from './items.js';
 import { startBackupSchedule } from './backup.js';
-import { providers } from './metadata/index.js';
+import { providers, activeSources } from './metadata/index.js';
 
 initDb();
 
@@ -100,7 +100,8 @@ app.use((err, _req, res, _next) => {
 app.listen(config.port, () => {
   console.log(`📚 MyLib ${config.version} listening on port ${config.port}`);
   console.log(`   data: ${config.dataDir}   backups: ${config.backupDir}`);
+  const names = activeSources().map((src) => src.name).join(' → ');
   const p = providers();
-  console.log(`   metadata: Open Library${p.google ? ', Google Books' : ''}${p.isbndb ? ', ISBNdb' : ''}${p.ai ? ', Claude cover reading' : ''}`);
+  console.log(`   book sources (in order): ${names}${p.nyt ? ' + NYT bestsellers' : ''}${p.ai ? ' + Claude cover reading' : ''}`);
   startBackupSchedule();
 });

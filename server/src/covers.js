@@ -7,7 +7,7 @@ import { getDb } from './db.js';
 import { config } from './config.js';
 import { fetchImage } from './metadata/http.js';
 import { coverByIsbn } from './metadata/openlibrary.js';
-import * as google from './metadata/googlebooks.js';
+import { activeSources } from './metadata/index.js';
 
 const EXT = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif' };
 
@@ -49,13 +49,16 @@ export async function fetchCoverForItem(item) {
       // try the next source
     }
   }
-  if (google.enabled() && item.ean_isbn13) {
-    try {
-      const hit = await google.lookupIsbn(item.ean_isbn13);
-      const img = hit?.cover_url && (await fetchImage(hit.cover_url));
-      if (img) return saveCover(item, img.buffer, img.contentType);
-    } catch {
-      // no cover available
+  // Then the other sources, in the order chosen in Settings (each within its daily limit).
+  if (item.ean_isbn13) {
+    for (const source of activeSources().filter((x) => x.id !== 'openlibrary')) {
+      try {
+        const hit = await source.module.lookupIsbn(item.ean_isbn13);
+        const img = hit?.cover_url && (await fetchImage(hit.cover_url));
+        if (img) return saveCover(item, img.buffer, img.contentType);
+      } catch {
+        // try the next source
+      }
     }
   }
   return null;

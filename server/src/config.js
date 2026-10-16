@@ -24,6 +24,15 @@ export const config = {
   trustProxy: env.TRUST_PROXY ?? '1',
   googleBooksKey: env.GOOGLE_BOOKS_API_KEY || '',
   isbndbKey: env.ISBNDB_API_KEY || '',
+  hardcoverToken: env.HARDCOVER_API_TOKEN || '',
+  nytKey: env.NYT_API_KEY || '',
+  // Calls per day before MyLib stops using a source until tomorrow (0 = no limit).
+  dailyLimits: {
+    google: parseInt(env.GOOGLE_BOOKS_DAILY_LIMIT || '1000', 10),
+    hardcover: parseInt(env.HARDCOVER_DAILY_LIMIT || '5000', 10),
+    nyt: parseInt(env.NYT_DAILY_LIMIT || '1000', 10),
+    isbndb: parseInt(env.ISBNDB_DAILY_LIMIT || '0', 10),
+  },
   anthropicKey: env.ANTHROPIC_API_KEY || '',
   anthropicModel: env.ANTHROPIC_MODEL || 'claude-opus-5-5',
   userAgent: 'MyLib/1.0 (self-hosted home library; https://github.com/dragoneat666/MyLib)',

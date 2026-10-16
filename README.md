@@ -29,18 +29,31 @@ Libib doesn't say publicly where its data comes from. Its records look like reta
 (Amazon-style titles such as *"Meet Rebecca (American Girl)"* and seller blurbs in some descriptions),
 the kind of data sold by services such as **ISBNdb** or Amazon's product API.
 
-MyLib combines these sources:
+MyLib uses these sources:
 
-| Source | Cost | What it adds | Setting |
+| Source | Cost / limit | What it adds | Setting |
 |---|---|---|---|
-| **Open Library** (Internet Archive) | free, no key | ISBN lookups, covers, series, search | always on |
-| **Google Books** | free key (1,000 lookups/day) | good titles, descriptions, publishers | `GOOGLE_BOOKS_API_KEY` |
+| **Open Library** (Internet Archive) | free, no key | ISBN lookups, covers, series, search | always available |
+| **Hardcover** | free token, 5,000 calls/day | series, descriptions, covers, search | `HARDCOVER_API_TOKEN` |
+| **Google Books** | free key, 1,000 calls/day | good titles, descriptions, publishers | `GOOGLE_BOOKS_API_KEY` |
 | **ISBNdb** | paid subscription | the most complete retail data | `ISBNDB_API_KEY` |
+| **NYT Books** | free key, capped at 1,000 calls/day | marks NYT bestsellers (only knows bestseller lists and NYT reviews) | `NYT_API_KEY` |
 | **Claude** (Anthropic) | pay per use (a few cents per cover photo) | reads cover photos to identify books | `ANTHROPIC_API_KEY` |
 
+**How they're called:** for book details, the sources are asked **one at a time in the order set on the
+Book sources page** (default: Open Library, Hardcover, Google Books, ISBNdb), stopping as soon as the book has
+a title, author, cover and description. Each source can be switched off there and has a **Test** button.
+MyLib counts every call and stops using a source for the rest of the day at its limit (`*_DAILY_LIMIT` in
+`.env`), and pauses one that answers "too many requests". NYT is checked once per looked-up book (max 5 a
+minute) and can tag bestsellers "NYT Bestseller". Goodreads can't be used: it stopped giving out API keys in 2020.
+
+Getting keys:
+- **Hardcover:** hardcover.app → Settings → *Hardcover API* → *New API Key* (copy it into `HARDCOVER_API_TOKEN`).
+- **Google Books:** <https://console.cloud.google.com> → create a project → *APIs & Services → Library* → enable
+  **Books API** → *Credentials → Create credentials → API key*.
+- **NYT:** <https://developer.nytimes.com> → create an app with the **Books API** enabled.
+
 Open Library alone finds most books; with no keys, it found covers for 24 of the 29 American Girl books in the sample export.
-Adding the free Google Books key is recommended; check it with the **Test** button in Settings. To get one: <https://console.cloud.google.com> → create
-a project → *APIs & Services → Library* → enable **Books API** → *Credentials → Create credentials → API key*.
 
 Each book also gets an **ISBN-13** and **ISBN-10** (one is calculated from the other when only one is
 known). Different editions (hardcover, paperback, Beforever reprints…) have different ISBNs, so scanning
